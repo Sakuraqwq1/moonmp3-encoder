@@ -6,3 +6,6 @@ target
 .moonagent/
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+*.egg-info/

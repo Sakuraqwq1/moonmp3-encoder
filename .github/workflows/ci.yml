@@ -61,6 +61,48 @@ jobs:
             exit 1
           fi
 
+  tools:
+    name: tools (python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install libsndfile
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsndfile1 libmpg123-0
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Check release consistency
+        run: python tools/check_release.py
+
+      - name: Generate deterministic fixtures
+        run: python tools/gen_fixtures.py --quiet
+
+      - name: Check the lab environment
+        run: python tools/doctor.py
+
+      - name: Test the lab tools
+        run: python tools/selftest.py
+
+      - name: Verify the silent frame grid end to end
+        run: python tools/verify.py structure
+
   build-wasm:
     name: build (wasm-gc)
     runs-on: ubuntu-latest
