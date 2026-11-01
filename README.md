@@ -1,5 +1,7 @@
 # moonmp3-encoder
 
+[![CI](https://github.com/Sakuraqwq1/moonmp3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Sakuraqwq1/moonmp3-encoder/actions/workflows/ci.yml)
+
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
 > 状态：**早期开发中（结构里程碑）**。帧头、边信息与 CBR 帧尺寸控制已就绪，输出是处处可解析、可解码的合法 MP3 流；主数据目前仍为静音，MDCT、量化与 Huffman 编码在接下来的版本落地。
@@ -33,11 +35,37 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 
 ## 验证方式
 
-编码器的正确性不靠"能跑"判断：`tools/verify.py` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码本编码器的输出，检查流长度、帧结构与静音正确性；`tools/mp3dump.py` 逐帧解析 MP3 流，是对照参考实现的检查器。
+编码器的正确性不靠"能跑"判断：
+
+- `tools/verify.py structure` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码输出，检查帧网格、长度和静音正确性。
+- `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
+- `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。
+- `tools/snr.py` 自动搜索解码延迟，测量逐声道和整体 SNR。
+- `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
+- `tools/selftest.py` 验证上述工具本身没有回归。
+- `tools/doctor.py` 检查 MoonBit、libsndfile、MP3 解码后端和素材是否就绪。
+- `tools/check_release.py` 核对版本三处同步、必需文件和 CI 覆盖。
+
+本地一次跑完：
+
+```bash
+python tools/gen_fixtures.py --quiet
+python tools/selftest.py
+python tools/verify.py structure
+```
+
+## 开发资料
+
+- [阶段 1 交接](docs/stage1-handoff.md)：完成判据、数据流边界、调试顺序。
+- [测试素材](docs/fixtures.md)：每个 fixture 的内容和预期现象。
+- [工具链说明](docs/tooling.md)：素材、帧解析、频谱、SNR 和自测命令。
+- [验收自查](docs/acceptance.md)：验收 9 条现状与初审门槛。
+- [来源与许可证](docs/provenance.md)：规范、数据表和 oracle 的边界。
+- [贡献约定](CONTRIBUTING.md)：门禁、提交和发布规则。
 
 ## 许可证与参考
 
 Apache-2.0，原创实现。
 
 - 规范：ISO/IEC 11172-3（MPEG-1 Audio）
-- 不读取、不移植 shine 或 LAME（均为 LGPL）；Huffman 表计划采用 CC0-1.0 的 minimp3 表作为数据，来源会在落地时在仓库中注明
+- 不读取、不移植 shine 或 LAME（均为 LGPL）；Huffman 表计划采用 CC0-1.0 的 minimp3 表作为数据，来源记录见 `docs/provenance.md`
