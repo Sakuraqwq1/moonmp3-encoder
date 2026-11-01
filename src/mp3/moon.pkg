@@ -1,0 +1,6 @@
+// moonmp3-encoder — pure MoonBit MP3 encoder.
+
+import {
+  "Sakuraqwq1/moonmp3-encoder/src/bits",
+  "moonbitlang/core/buffer",
+}

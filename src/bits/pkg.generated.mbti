@@ -1,0 +1,27 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Sakuraqwq1/moonmp3-encoder/src/bits"
+
+import {
+  "moonbitlang/core/buffer",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct BitWriter {
+  buffer : @buffer.Buffer
+  mut current : Int32
+  mut filled : Int32
+}
+pub fn BitWriter::align(Self) -> Unit
+pub fn BitWriter::bit_length(Self) -> Int32
+pub fn BitWriter::finish(Self) -> Bytes
+pub fn BitWriter::new() -> Self
+pub fn BitWriter::write_bit(Self, Int32) -> Unit
+pub fn BitWriter::write_bits(Self, Int64, Int32) -> Unit
+
+// Type aliases
+
+// Traits

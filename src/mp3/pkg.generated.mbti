@@ -1,0 +1,75 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Sakuraqwq1/moonmp3-encoder/src/mp3"
+
+import {
+  "Sakuraqwq1/moonmp3-encoder/src/bits",
+}
+
+// Values
+pub const BaseFrameBytes : Int32 = 417
+
+pub const Bitrate128kbps : Int32 = 128000
+
+pub const BitrateIndex128 : Int32 = 9
+
+pub const FrameSamples : Int32 = 1152
+
+pub const ModeMono : Int32 = 3
+
+pub const ModeStereo : Int32 = 0
+
+pub const SampleRate44100 : Int32 = 44100
+
+pub const SampleRateIndex44100 : Int32 = 0
+
+pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise EncodeError
+
+pub fn write_header(@bits.BitWriter, Int32, Int32, Int32, Int32) -> Unit
+
+pub fn write_side_info(@bits.BitWriter, Int32, Int32, Array[Int32], Array[GranuleInfo]) -> Unit
+
+// Errors
+pub suberror EncodeError {
+  UnsupportedSampleRate(Int32)
+  UnsupportedChannels(Int32)
+  NotInterleaved(Int32)
+  EmptyInput
+}
+
+// Types and methods
+pub struct FrameSizer {
+  numer : Int64
+  denom : Int64
+  base : Int32
+  mut emitted : Int32
+  mut total : Int64
+}
+pub fn FrameSizer::new(Int32, Int32) -> Self
+pub fn FrameSizer::next_frame_size(Self) -> Int32
+pub fn FrameSizer::padding_of(Self, Int32) -> Int32
+
+pub(all) struct GranuleInfo {
+  part2_3_length : Int32
+  big_values : Int32
+  global_gain : Int32
+  scalefac_compress : Int32
+  window_switching_flag : Int32
+  block_type : Int32
+  mixed_block_flag : Int32
+  table_select0 : Int32
+  table_select1 : Int32
+  table_select2 : Int32
+  subblock_gain0 : Int32
+  subblock_gain1 : Int32
+  subblock_gain2 : Int32
+  region0_count : Int32
+  region1_count : Int32
+  preflag : Int32
+  scalefac_scale : Int32
+  count1table_select : Int32
+}
+pub fn GranuleInfo::silent() -> Self
+
+// Type aliases
+
+// Traits
