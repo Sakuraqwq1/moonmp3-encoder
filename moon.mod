@@ -23,4 +23,4 @@ keywords = [
   "pcm",
 ]
 
-description = "Pure MoonBit MP3 encoder: turn interleaved PCM into an MPEG-1 Layer III stream with MDCT transform, Huffman coding and a bit reservoir."
+description = "Pure MoonBit MPEG-1 Layer III stream writer: CBR frame headers, side information and decodable silence; audio coding is under development."

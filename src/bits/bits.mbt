@@ -60,7 +60,7 @@ pub fn BitWriter::write_bits(
 
 ///|
 /// Number of bits written so far.
-pub fn BitWriter::bit_length(self : BitWriter) -> Int {
+pub fn BitWriter::bit_length(self : BitWriter) -> Int32 {
   self.buffer.length() * 8 + self.filled
 }
 

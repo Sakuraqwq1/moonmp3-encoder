@@ -10,7 +10,7 @@ MoonBit 生态里已有纯 MoonBit 的 MP3 **解码器**（`enanandesu/mp3`）�
 
 本项目补上"写出"这一半：纯 MoonBit、零 FFI、可在 wasm-gc 与 native 上跑，输出是标准 MP3 流，任何解码器（libsndfile、ffmpeg、浏览器）都能读。
 
-## 范围（v1）
+## 目标范围（v1）
 
 - MPEG-1 Layer III，44100 Hz，单声道 / 立体声
 - 固定比特率 128 kbps
@@ -29,9 +29,11 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
+> 当前版本是结构里程碑：输入采样值尚未参与编码，输出固定为静音。请勿把 0.1.x 用于真实音频导出；MDCT、量化与 Huffman 编码落地后会更新这里的能力说明。
+
 ## 验证方式
 
-编码器的正确性不靠"能跑"判断：`tools/verify.py` 用 libsndfile（底层 LAME，完全独立于 MoonBit 生态）解码本编码器的输出，检查流长度、帧结构与静音正确性；`tools/mp3dump.py` 逐帧解析 MP3 流，是对照参考实现的检查器。
+编码器的正确性不靠"能跑"判断：`tools/verify.py` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码本编码器的输出，检查流长度、帧结构与静音正确性；`tools/mp3dump.py` 逐帧解析 MP3 流，是对照参考实现的检查器。
 
 ## 许可证与参考
 

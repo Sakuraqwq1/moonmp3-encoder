@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Reproducible verification for moonmp3-encoder.
 
-structure   Emit silence through the CLI, decode it with libsndfile (through
-            Python `soundfile`, i.e. LAME/mpg123, completely independent of the
-            MoonBit ecosystem) and check the frame grid: the stream must decode
-            to exactly frames * 1152 zero samples per channel.
+structure   Emit silence through the CLI, decode it with libsndfile through
+            Python `soundfile` (its MP3 decoder is mpg123, completely
+            independent of the MoonBit ecosystem) and check the frame grid:
+            the stream must decode to exactly frames * 1152 zero samples per
+            channel.
 
 Later stages add `matrix` (SNR against the source PCM), `benchmark` (size
 against LAME at the same CBR rate) and `perf`.

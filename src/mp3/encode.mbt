@@ -2,22 +2,21 @@
 // Copyright 2026 Sakuraqwq1
 // Licensed under the Apache License, Version 2.0.
 
-///| Failures the encoder can report.
+///|
+/// Failures the encoder can report.
 pub suberror EncodeError {
-  ///| v1 emits 44100 Hz only; other rates are planned for later versions.
+  /// v1 emits 44100 Hz only; other rates are planned for later versions.
   UnsupportedSampleRate(Int32)
-
-  ///| v1 emits mono and stereo only.
+  /// v1 emits mono and stereo only.
   UnsupportedChannels(Int32)
-
-  ///| The sample count is not a whole number of frames for the channel count.
-  NotInterleaved(Int)
-
-  ///| No samples were supplied.
+  /// The sample count is not a whole number of frames for the channel count.
+  NotInterleaved(Int32)
+  /// No samples were supplied.
   EmptyInput
 }
 
-///| Encode interleaved signed 16-bit PCM as an MPEG-1 Layer III stream.
+///|
+/// Encode interleaved signed 16-bit PCM as an MPEG-1 Layer III stream.
 ///
 /// v1 is a structural milestone: the frames, side information and CBR sizing
 /// are real and the output decodes everywhere, but the main data is still

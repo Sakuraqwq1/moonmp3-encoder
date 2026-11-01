@@ -7,65 +7,51 @@
 // (the MPEG-1 audio_data layout). Side info is 17 bytes in mono and 32 bytes
 // otherwise; the frame's main data follows immediately after it.
 
-///| Layer III side information for one granule of one channel.
+///|
+/// Layer III side information for one granule of one channel.
 pub(all) struct GranuleInfo {
-  ///| Length in bits of the scalefactor (part 2) plus Huffman (part 3) data.
+  /// Length in bits of the scalefactor (part 2) plus Huffman (part 3) data.
   part2_3_length : Int32
-
-  ///| Number of Huffman code pairs in the "big values" region, times two.
+  /// Number of Huffman code pairs in the "big values" region, times two.
   big_values : Int32
-
-  ///| Quantiser step size, in steps of 0.25 dB.
+  /// Quantiser step size, in steps of 0.25 dB.
   global_gain : Int32
-
-  ///| Which scalefactor bands are coded, and with what precision.
+  /// Which scalefactor bands are coded, and with what precision.
   scalefac_compress : Int32
-
-  ///| 1 when the granule uses window switching (short or mixed blocks).
+  /// 1 when the granule uses window switching (short or mixed blocks).
   window_switching_flag : Int32
-
-  ///| 0 long, 1 start, 3 short (2 is reserved); only with window switching.
+  /// 0 long, 1 start, 3 short (2 is reserved); only with window switching.
   block_type : Int32
-
-  ///| Long-block scalefactor bands below the switched window region.
+  /// Long-block scalefactor bands below the switched window region.
   mixed_block_flag : Int32
-
-  ///| Huffman table for region 0.
+  /// Huffman table for region 0.
   table_select0 : Int32
-
-  ///| Huffman table for region 1.
+  /// Huffman table for region 1.
   table_select1 : Int32
-
-  ///| Huffman table for region 2 (or the second short-block region).
+  /// Huffman table for region 2 (or the second short-block region).
   table_select2 : Int32
-
-  ///| Gain offset for short-block subblock 0.
+  /// Gain offset for short-block subblock 0.
   subblock_gain0 : Int32
-
-  ///| Gain offset for short-block subblock 1.
+  /// Gain offset for short-block subblock 1.
   subblock_gain1 : Int32
-
-  ///| Gain offset for short-block subblock 2.
+  /// Gain offset for short-block subblock 2.
   subblock_gain2 : Int32
-
-  ///| One less than the number of scalefactor bands in region 0.
+  /// One less than the number of scalefactor bands in region 0.
   region0_count : Int32
-
-  ///| One less than the number of scalefactor bands in region 1.
+  /// One less than the number of scalefactor bands in region 1.
   region1_count : Int32
-
-  ///| High-frequency amplification of scalefactors (MPEG-1 only).
+  /// High-frequency amplification of scalefactors (MPEG-1 only).
   preflag : Int32
-
-  ///| Scalefactor step size: 0 short (0.5 dB), 1 long (1.0 dB).
+  /// Scalefactor step size: 0 short (0.5 dB), 1 long (1.0 dB).
   scalefac_scale : Int32
-
-  ///| Huffman table for the count1 region: 0 selects table A.
+  /// Huffman table for the count1 region: 0 selects table A.
   count1table_select : Int32
 }
 
 ///| Side information that decodes to digital silence: no scalefactors, no
-///| Huffman data, no big values. A frame made of this plus an empty reservoir
+
+///|
+/// Huffman data, no big values. A frame made of this plus an empty reservoir
 /// carries 1152 zero samples and still parses everywhere.
 pub fn GranuleInfo::silent() -> GranuleInfo {
   {
@@ -90,7 +76,8 @@ pub fn GranuleInfo::silent() -> GranuleInfo {
   }
 }
 
-///| Write the side information of one frame.
+///|
+/// Write the side information of one frame.
 ///
 /// `scfsi` holds one 4-bit scalefactor selector per channel and `granules`
 /// holds `2 * channels` entries ordered granule-major: index

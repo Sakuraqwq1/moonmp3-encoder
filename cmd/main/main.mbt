@@ -18,12 +18,8 @@ fn main {
     println(@encoder.version())
   } else {
     println("unknown command")
-    println(
-      "  selftest   emit one second of silence, print the MP3 as base64",
-    )
-    println(
-      "  silent     emit n samples of silence, print the MP3 as base64",
-    )
+    println("  selftest   emit one second of silence, print the MP3 as base64")
+    println("  silent     emit n samples of silence, print the MP3 as base64")
     println("  version    print the module version")
   }
 }
@@ -73,7 +69,7 @@ fn run_silent(args : Array[String]) -> Unit {
 
 ///|
 /// Read `args[index]` as a non-negative integer, or `fallback` when absent.
-fn parse_count(args : Array[String], index : Int, fallback : Int) -> Int {
+fn parse_count(args : Array[String], index : Int32, fallback : Int32) -> Int32 {
   if index >= args.length() {
     return fallback
   }

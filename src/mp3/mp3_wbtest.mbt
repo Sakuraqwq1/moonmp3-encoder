@@ -6,6 +6,7 @@
 // parameter set, and the side information must land on 17/32 bytes exactly,
 // so both are pinned against hand-computed bytes.
 
+///|
 test "header : stereo 128 kbps 44.1 kHz, no padding" {
   let w = @bits.BitWriter::new()
   write_header(w, BitrateIndex128, SampleRateIndex44100, ModeStereo, 0)
@@ -17,6 +18,7 @@ test "header : stereo 128 kbps 44.1 kHz, no padding" {
   assert_eq(bytes[3].to_int(), 0x00)
 }
 
+///|
 test "header : mono sets the mode field" {
   let w = @bits.BitWriter::new()
   write_header(w, BitrateIndex128, SampleRateIndex44100, ModeMono, 0)
@@ -24,6 +26,7 @@ test "header : mono sets the mode field" {
   assert_eq(bytes[3].to_int(), 0xC0)
 }
 
+///|
 test "header : the padding bit is byte 2, bit 1" {
   let w = @bits.BitWriter::new()
   write_header(w, BitrateIndex128, SampleRateIndex44100, ModeStereo, 1)
@@ -31,6 +34,7 @@ test "header : the padding bit is byte 2, bit 1" {
   assert_eq(bytes[2].to_int(), 0x92)
 }
 
+///|
 test "sizer : the frame grid is exact and never drifts" {
   let sizer = FrameSizer::new(Bitrate128kbps, SampleRate44100)
   let mut total = 0
@@ -50,6 +54,7 @@ test "sizer : the frame grid is exact and never drifts" {
   assert_eq(total, 20480)
 }
 
+///|
 test "sizer : the padding bit survives 200 frames" {
   let sizer = FrameSizer::new(Bitrate128kbps, SampleRate44100)
   let mut total = 0
@@ -64,23 +69,25 @@ test "sizer : the padding bit survives 200 frames" {
   assert_eq(total, 83591)
 }
 
+///|
 test "side info : mono is exactly 17 bytes" {
   let w = @bits.BitWriter::new()
   let scfsi = [0]
-  let granules = [
-    GranuleInfo::silent(), GranuleInfo::silent(),
-  ]
+  let granules = [GranuleInfo::silent(), GranuleInfo::silent()]
   write_side_info(w, 1, 0, scfsi, granules)
   assert_eq(w.bit_length(), 136)
   let bytes = w.finish()
   assert_eq(bytes.length(), 17)
 }
 
+///|
 test "side info : stereo is exactly 32 bytes" {
   let w = @bits.BitWriter::new()
   let scfsi = [0, 0]
   let granules = [
-    GranuleInfo::silent(), GranuleInfo::silent(), GranuleInfo::silent(),
+    GranuleInfo::silent(),
+    GranuleInfo::silent(),
+    GranuleInfo::silent(),
     GranuleInfo::silent(),
   ]
   write_side_info(w, 2, 0, scfsi, granules)
@@ -89,12 +96,11 @@ test "side info : stereo is exactly 32 bytes" {
   assert_eq(bytes.length(), 32)
 }
 
+///|
 test "side info : all-zero granules serialise to zero bytes" {
   let w = @bits.BitWriter::new()
   let scfsi = [0]
-  let granules = [
-    GranuleInfo::silent(), GranuleInfo::silent(),
-  ]
+  let granules = [GranuleInfo::silent(), GranuleInfo::silent()]
   write_side_info(w, 1, 0, scfsi, granules)
   let bytes = w.finish()
   for index = 0; index < bytes.length(); index = index + 1 {
@@ -102,6 +108,7 @@ test "side info : all-zero granules serialise to zero bytes" {
   }
 }
 
+///|
 test "encode : one second of stereo silence is 39 valid frames" {
   let samples = Array::make(44100 * 2, 0)
   let mp3 = encode(samples, SampleRate44100, 2)
@@ -121,6 +128,7 @@ test "encode : one second of stereo silence is 39 valid frames" {
   assert_eq(offset, 16300)
 }
 
+///|
 test "encode : rejects what v1 does not support" {
   assert_eq(rejects([0, 0, 0, 0], 48000, 2), true)
   assert_eq(rejects([0, 0, 0, 0], 44100, 3), true)

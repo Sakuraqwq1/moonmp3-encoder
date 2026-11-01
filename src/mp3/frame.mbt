@@ -4,32 +4,41 @@
 
 // Frame headers and the CBR frame-size bookkeeping. ISO/IEC 11172-3 §3.3.2.
 
-///| v1 encodes at a constant 128 kbps; its Layer III bitrate index.
+///|
+/// v1 encodes at a constant 128 kbps; its Layer III bitrate index.
 pub const BitrateIndex128 : Int32 = 9
 
-///| Output bitrate of v1, in bits per second.
+///|
+/// Output bitrate of v1, in bits per second.
 pub const Bitrate128kbps : Int32 = 128000
 
-///| The fixed output sample rate of v1, 44100 Hz.
+///|
+/// The fixed output sample rate of v1, 44100 Hz.
 pub const SampleRate44100 : Int32 = 44100
 
-///| Layer III samplerate table index of 44100 Hz under MPEG-1.
+///|
+/// Layer III samplerate table index of 44100 Hz under MPEG-1.
 pub const SampleRateIndex44100 : Int32 = 0
 
-///| Samples carried by one Layer III frame, per channel.
+///|
+/// Samples carried by one Layer III frame, per channel.
 pub const FrameSamples : Int32 = 1152
 
-///| Unpadded frame size at 128 kbps / 44100 Hz, `floor(144 * bitrate /
+///|
+/// Unpadded frame size at 128 kbps / 44100 Hz, `floor(144 * bitrate /
 /// samplerate)` bytes.
 pub const BaseFrameBytes : Int32 = 417
 
-///| Channel mode field: 00 stereo, 01 joint stereo, 10 dual, 11 mono.
+///|
+/// Channel mode field: 00 stereo, 01 joint stereo, 10 dual, 11 mono.
 pub const ModeStereo : Int32 = 0
 
-///| The mono value of the channel mode field.
+///|
+/// The mono value of the channel mode field.
 pub const ModeMono : Int32 = 3
 
-///| Write the 4-byte MPEG-1 Layer III frame header.
+///|
+/// Write the 4-byte MPEG-1 Layer III frame header.
 ///
 /// Protection is always set (no CRC): the v1 coder carries no protected
 /// frames, and every field the header still allows (private, mode extension,
@@ -65,7 +74,8 @@ pub fn write_header(
   // emphasis
 }
 
-///| Exact frame-size bookkeeping for CBR output.
+///|
+/// Exact frame-size bookkeeping for CBR output.
 ///
 /// `144 * bitrate / samplerate` is not an integer at 44.1 kHz — 417.96 bytes
 /// at 128 kbps — so the padding bit has to track the accumulated error. The
@@ -75,17 +85,14 @@ pub fn write_header(
 /// bitrate is exactly 128 kbps and the frame grid never drifts.
 pub struct FrameSizer {
   numer : Int64
-
   denom : Int64
-
   base : Int32
-
   mut emitted : Int32
-
   mut total : Int64
 }
 
-///| Track frame sizes for a CBR stream of `bitrate` bits per second at
+///|
+/// Track frame sizes for a CBR stream of `bitrate` bits per second at
 /// `samplerate` samples per second.
 pub fn FrameSizer::new(bitrate : Int32, samplerate : Int32) -> FrameSizer {
   let numer = 144L * bitrate.to_int64()
@@ -98,19 +105,21 @@ pub fn FrameSizer::new(bitrate : Int32, samplerate : Int32) -> FrameSizer {
   }
 }
 
-///| Size in bytes of the next frame, padding already included.
+///|
+/// Size in bytes of the next frame, padding already included.
 ///
 /// At 128 kbps / 44.1 kHz this is 417 for the first frame and 418 for almost
 /// every one after it: 47 of every 49 frames carry the padding bit.
 pub fn FrameSizer::next_frame_size(self : FrameSizer) -> Int32 {
   self.emitted = self.emitted + 1
-  let target = (self.emitted.to_int64() * self.numer) / self.denom
+  let target = self.emitted.to_int64() * self.numer / self.denom
   let size = target - self.total
   self.total = target
   size.to_int()
 }
 
-///| The padding bit value for a frame of `size` bytes.
+///|
+/// The padding bit value for a frame of `size` bytes.
 pub fn FrameSizer::padding_of(self : FrameSizer, size : Int32) -> Int32 {
   size - self.base
 }

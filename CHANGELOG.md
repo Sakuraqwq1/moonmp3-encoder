@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## [0.1.0] - 2026-11-01
 
 - 帧头（MPEG-1 Layer III，128 kbps / 44100 Hz，无 CRC）与 CBR 帧尺寸控制：
   padding 按累积误差计算，`n` 帧后的字节总数恒等于 `floor(n * 144 * bitrate / samplerate)`

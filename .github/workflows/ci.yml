@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install MoonBit (unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+          echo "MOONFMT_OVERRIDE=$HOME/.moon/bin/moonfmt" >> "$GITHUB_ENV"
+
+      - name: Install MoonBit (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://cli.moonbitlang.com/install/powershell.ps1" -OutFile "$env:TEMP\install-moonbit.ps1"
+          & "$env:TEMP\install-moonbit.ps1"
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "MOONFMT_OVERRIDE=$env:USERPROFILE\.moon\bin\moonfmt.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Show toolchain versions
+        run: moon version --all
+
+      - name: Type check
+        run: moon check --deny-warn
+
+      - name: Run tests
+        run: moon test --deny-warn
+
+      - name: Check formatting
+        shell: bash
+        run: moon fmt --check
+
+      - name: Check generated interfaces are up to date
+        shell: bash
+        run: |
+          moon info
+          if [ -n "$(git status --porcelain -- '*.mbti')" ]; then
+            echo "::error::generated .mbti interfaces are stale; run 'moon info' and commit"
+            git --no-pager diff -- '*.mbti'
+            exit 1
+          fi
+
+  build-wasm:
+    name: build (wasm-gc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Build every package for wasm-gc
+        run: moon build --target wasm-gc
+      - name: Run the CLI smoke test
+        run: moon run cmd/main -- selftest
+
+  build-native:
+    name: build (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Build every package for the native backend
+        run: moon build --target native
+      - name: Encode silence end to end
+        run: moon run cmd/main -- silent 44100 2
