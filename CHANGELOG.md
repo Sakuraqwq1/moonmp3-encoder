@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] - 2026-11-01
+
+- 修复 Windows CI 的接口新鲜度检查：提交 `.gitattributes`，强制 `.mbti` /
+  `.mbt` / `.pkg` 使用 LF，避免 CRLF 检出把 `moon info` 的 LF 重写误判为接口过期
+- 编码逻辑与 0.1.0 完全一致，发布包中的源文件内容不变
+
 ## [0.1.0] - 2026-11-01
 
 - 帧头（MPEG-1 Layer III，128 kbps / 44100 Hz，无 CRC）与 CBR 帧尺寸控制：
