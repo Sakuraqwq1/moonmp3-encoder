@@ -16,77 +16,77 @@ against the repository root.
 """
 
 import argparse
-import base64
+import json
 import os
-import subprocess
 import sys
-import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MOON = os.environ.get("MOON") or os.path.expanduser("~/.moon/bin/moon")
-
-
-def emit_silence(samples, channels):
-    """Run the encoder's `silent` command and return the MP3 bytes."""
-    proc = subprocess.run(
-        [MOON, "run", "cmd/main", "--", "silent", str(samples), str(channels)],
-        cwd=ROOT, capture_output=True, text=True,
-    )
-    lines = proc.stdout.splitlines()
-    if "MP3BEGIN" not in lines:
-        raise RuntimeError(f"encode failed: {proc.stderr.strip()[:200]}")
-    return base64.b64decode(lines[lines.index("MP3BEGIN") + 1])
-
-
-def decode(mp3):
-    """Decode with libsndfile and return (samples, rate), always 2-D float."""
-    import soundfile as sf
-
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
-        handle.write(mp3)
-        path = handle.name
-    try:
-        data, rate = sf.read(path, always_2d=True)
-    finally:
-        os.unlink(path)
-    return data, rate
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mp3lab import ToolError, decode_mp3, encode_silence
 
 
 def structure():
     """The frame grid check: silence in, exact-length silence out."""
     import numpy as np
 
-    failures = 0
+    cases = []
     # libsndfile/mpg123 cannot open a one-frame MP3 stream (it reads the next
     # header to identify the format), so the decoder-side check starts at two
     # frames; one-frame streams are covered structurally by tools/mp3dump.py.
     for samples in (1153, 2304, 4095, 4096, 4097, 44100):
         for channels in (1, 2):
-            mp3 = emit_silence(samples, channels)
+            mp3 = encode_silence(samples, channels)
             frames = (samples + 1151) // 1152
-            data, rate = decode(mp3)
+            data, rate = decode_mp3(mp3)
             peak = float(np.max(np.abs(data))) if data.size else 0.0
             expected = frames * 1152
             ok = rate == 44100 and data.shape[0] == expected and peak == 0.0
-            status = "ok" if ok else "FAIL"
-            print(
-                f"{status}: samples={samples:5d} ch={channels} "
-                f"frames={frames} decoded={data.shape[0]} peak={peak:.6f}"
+            cases.append(
+                {
+                    "samples": samples,
+                    "channels": channels,
+                    "frames": frames,
+                    "decoded": int(data.shape[0]),
+                    "peak": peak,
+                    "ok": ok,
+                }
             )
-            if not ok:
-                failures += 1
+    return cases
+
+
+def print_cases(cases, quiet=False):
+    failures = 0
+    for case in cases:
+        status = "ok" if case["ok"] else "FAIL"
+        if not quiet:
+            print(
+                f"{status}: samples={case['samples']:5d} ch={case['channels']} "
+                f"frames={case['frames']} decoded={case['decoded']} peak={case['peak']:.6f}"
+            )
+        if not case["ok"]:
+            failures += 1
     return failures
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("check", choices=["structure"])
+    parser.add_argument("--json", action="store_true", help="emit a machine-readable report")
     args = parser.parse_args()
-    failures = structure()
-    if failures:
-        print(f"\n{failures} case(s) failed")
+    try:
+        cases = structure()
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    print("\nall checks passed")
+    failures = print_cases(cases, quiet=args.json)
+    report = {"check": "structure", "passed": len(cases) - failures, "failed": failures, "cases": cases}
+    if args.json:
+        print(json.dumps(report, indent=2))
+    if failures:
+        if not args.json:
+            print(f"\n{failures} case(s) failed")
+        return 1
+    if not args.json:
+        print("\nall checks passed")
     return 0
 
 
