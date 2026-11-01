@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """Frame-level dump of an MP3 stream.
 
-Walks an MP3 file and prints, per frame: the byte offset, every header field,
+Walks an MP3 file and reports, per frame: the byte offset, every header field,
 the frame size, the side information (main_data_begin and each granule's
 part2_3_length / big_values / global_gain / scalefac_compress / block info)
 and whether the frame carries a Xing or Info tag.
 
-The dump is the reference against which the encoder's own output is checked:
+This is the reference against which the encoder's own output is checked:
 LAME-produced files show the real layout (Xing position, padding pattern,
-side-info offsets), and the summary line pins the frame grid.
+side-info offsets), and the summary pins the frame grid.
 
-Usage: python tools/mp3dump.py <file.mp3> [--first N] [--verbose]
+Usage:
+    python tools/mp3dump.py <file.mp3> [--first N] [--verbose]
+    python tools/mp3dump.py <file.mp3> --json
+    python tools/mp3dump.py <file.mp3> --strict
+
+Exit codes: 0 clean, 1 unreadable input, 2 --strict saw a warning.
 """
 
 import argparse
+import json
 import os
 import struct
 import sys
@@ -44,6 +50,8 @@ class Bits:
 
 
 def parse_header(data, offset):
+    if offset + 4 > len(data):
+        return None
     b0, b1, b2, b3 = data[offset:offset + 4]
     if b0 != 0xFF or (b1 & 0xE0) != 0xE0:
         return None
@@ -70,12 +78,16 @@ def parse_header(data, offset):
     size = 144 * bitrate // samplerate + padding
     return {
         "version": version,
+        "version_name": VERSION_NAMES[version],
         "protection": b1 & 1,
+        "bitrate_index": bitrate_idx,
         "bitrate": bitrate,
+        "samplerate_index": samplerate_idx,
         "samplerate": samplerate,
         "padding": padding,
         "private": b2 & 1,
         "mode": mode,
+        "mode_name": MODE_NAMES[mode],
         "channels": channels,
         "mode_ext": (b3 >> 4) & 3,
         "copyright": (b3 >> 3) & 1,
@@ -87,7 +99,10 @@ def parse_header(data, offset):
 
 
 def parse_side_info(data, offset, channels):
-    bits = Bits(data[offset:offset + (17 if channels == 1 else 32)])
+    size = 17 if channels == 1 else 32
+    if offset + size > len(data):
+        raise ValueError("side information extends past the file")
+    bits = Bits(data[offset:offset + size])
     info = {"main_data_begin": bits.read(9)}
     bits.read(5 if channels == 1 else 3)  # private bits
     info["scfsi"] = [bits.read(4) for _ in range(channels)]
@@ -105,64 +120,170 @@ def parse_side_info(data, offset, channels):
             if wsf:
                 g["block_type"] = bits.read(2)
                 g["mixed_block"] = bits.read(1)
-                bits.read(5)  # table_select 0
-                bits.read(5)  # table_select 2
-                bits.read(9)  # subblock gains
+                g["table_select"] = [bits.read(5), None, bits.read(5)]
+                g["subblock_gain"] = [bits.read(3), bits.read(3), bits.read(3)]
             else:
-                bits.read(15)  # three table_select fields
-                bits.read(4)  # region0_count
-                bits.read(3)  # region1_count
-            bits.read(1)  # preflag
-            bits.read(1)  # scalefac_scale
-            bits.read(1)  # count1table_select
+                g["block_type"] = 0
+                g["mixed_block"] = 0
+                g["table_select"] = [bits.read(5), bits.read(5), bits.read(5)]
+                g["subblock_gain"] = [0, 0, 0]
+                g["region0_count"] = bits.read(4)
+                g["region1_count"] = bits.read(3)
+            g["preflag"] = bits.read(1)
+            g["scalefac_scale"] = bits.read(1)
+            g["count1table_select"] = bits.read(1)
             granules.append(g)
     info["granules"] = granules
     return info
 
 
-def dump(path, first, verbose):
+def parse_vbr_tag(data, offset, end):
+    """Parse a Xing/Info header when one starts at `offset`."""
+    if offset + 8 > end:
+        return None
+    kind = data[offset:offset + 4]
+    if kind not in (b"Xing", b"Info"):
+        return None
+    flags = struct.unpack(">I", data[offset + 4:offset + 8])[0]
+    tag = {"kind": kind.decode("ascii"), "flags": flags}
+    cursor = offset + 8
+    if flags & 0x1 and cursor + 4 <= end:
+        tag["frames"] = struct.unpack(">I", data[cursor:cursor + 4])[0]
+        cursor += 4
+    if flags & 0x2 and cursor + 4 <= end:
+        tag["bytes"] = struct.unpack(">I", data[cursor:cursor + 4])[0]
+        cursor += 4
+    if flags & 0x4 and cursor + 100 <= end:
+        tag["toc_entries"] = 100
+        cursor += 100
+    if flags & 0x8 and cursor + 4 <= end:
+        tag["quality"] = struct.unpack(">I", data[cursor:cursor + 4])[0]
+    return tag
+
+
+def analyze(path):
+    """Parse an MP3 file into a JSON-serialisable report."""
     with open(path, "rb") as handle:
         data = handle.read()
+    report = {
+        "path": os.path.abspath(path),
+        "bytes": len(data),
+        "id3v2": None,
+        "id3v1": False,
+        "frames": [],
+        "warnings": [],
+    }
     offset = 0
-    if data[:3] == b"ID3":
+    if data[:3] == b"ID3" and len(data) >= 10:
         flags = data[5]
         size = 0
         for byte in data[6:10]:
             size = (size << 7) | (byte & 0x7F)
         footer = 10 if flags & 0x10 else 0
-        print(f"ID3v2: version {data[3]}.{data[4]}, {size + 10 + footer} bytes")
-        offset = size + 10 + footer
+        total = size + 10 + footer
+        report["id3v2"] = {
+            "version": f"{data[3]}.{data[4]}",
+            "flags": flags,
+            "size": total,
+        }
+        offset = total
     end = len(data)
     if data[-128:-125] == b"TAG":
-        print("ID3v1: 128-byte trailer")
+        report["id3v1"] = True
         end -= 128
-    frames = []
+
     while offset + 4 <= end:
         header = parse_header(data, offset)
         if header is None:
-            print(f"WARNING: no sync at offset {offset}, stopping")
+            report["warnings"].append(f"no sync at offset {offset}, stopping")
+            break
+        if header["size"] < 4 + header["side_size"]:
+            report["warnings"].append(f"frame {len(report['frames'])} at {offset}: impossible size")
             break
         side_offset = offset + 4 + (0 if header["protection"] else 2)
-        info = parse_side_info(data, side_offset, header["channels"])
-        body_offset = side_offset + header["side_size"]
-        tag = ""
-        if data[body_offset:body_offset + 4] in (b"Xing", b"Info"):
-            tag = data[body_offset:body_offset + 4].decode("ascii")
-            flags = struct.unpack(">I", data[body_offset + 4:body_offset + 8])[0]
-            tag += f"(flags={flags:#x})"
-        frames.append((offset, header, info, tag))
-        offset += header["size"]
-    for index, (frame_offset, header, info, tag) in enumerate(frames):
-        if first is not None and index >= first:
+        try:
+            info = parse_side_info(data, side_offset, header["channels"])
+        except (IndexError, ValueError) as exc:
+            report["warnings"].append(f"frame {len(report['frames'])} at {offset}: {exc}")
             break
+        if offset + header["size"] > end:
+            report["warnings"].append(
+                f"frame {len(report['frames'])} at {offset}: frame extends past end"
+            )
+            break
+        body_offset = side_offset + header["side_size"]
+        tag = parse_vbr_tag(data, body_offset, end)
+        report["frames"].append(
+            {
+                "index": len(report["frames"]),
+                "offset": offset,
+                "header": header,
+                "side_info": info,
+                "vbr_tag": tag,
+            }
+        )
+        offset += header["size"]
+    else:
+        if offset != end:
+            report["warnings"].append(f"{end - offset} trailing byte(s) after the last frame")
+
+    if not report["frames"]:
+        report["warnings"].append("no MPEG frames found")
+    frames = report["frames"]
+    bitrates = sorted({frame["header"]["bitrate"] for frame in frames})
+    rates = sorted({frame["header"]["samplerate"] for frame in frames})
+    channels = sorted({frame["header"]["channels"] for frame in frames})
+    total_bytes = sum(frame["header"]["size"] for frame in frames)
+    samples = len(frames) * 1152
+    report["summary"] = {
+        "frames": len(frames),
+        "bytes": total_bytes,
+        "samples_per_channel": samples,
+        "seconds_at_first_rate": round(samples / rates[0], 6) if rates else 0.0,
+        "bitrates": bitrates,
+        "samplerates": rates,
+        "channels": channels,
+        "constant_bitrate": len(bitrates) == 1,
+        "constant_samplerate": len(rates) == 1,
+    }
+    return report
+
+
+def _human_tag(tag):
+    if not tag:
+        return ""
+    parts = [f"{tag['kind']}(flags={tag['flags']:#x}"]
+    if "frames" in tag:
+        parts.append(f" frames={tag['frames']}")
+    if "bytes" in tag:
+        parts.append(f" bytes={tag['bytes']}")
+    parts.append(")")
+    return "".join(parts)
+
+
+def dump(path, first, verbose, report=None):
+    report = report if report is not None else analyze(path)
+    id3v2 = report["id3v2"]
+    if id3v2:
+        print(f"ID3v2: version {id3v2['version']}, {id3v2['size']} bytes")
+    if report["id3v1"]:
+        print("ID3v1: 128-byte trailer")
+    for warning in report["warnings"]:
+        print(f"WARNING: {warning}")
+    for frame in report["frames"]:
+        if first >= 0 and frame["index"] >= first:
+            break
+        header = frame["header"]
+        info = frame["side_info"]
         base = (
-            f"frame {index:4d} @ {frame_offset:7d} "
-            f"MPEG-{VERSION_NAMES[header['version']]} Layer III "
+            f"frame {frame['index']:4d} @ {frame['offset']:7d} "
+            f"MPEG-{header['version_name']} Layer III "
             f"{header['bitrate'] // 1000:3d}kbps {header['samplerate']:5d}Hz "
-            f"{MODE_NAMES[header['mode']]:6s} "
+            f"{header['mode_name']:6s} "
             f"pad={header['padding']} size={header['size']:3d} "
             f"mdb={info['main_data_begin']:3d}"
         )
+        tag = _human_tag(frame["vbr_tag"])
         if verbose or tag:
             base += f" {tag}"
         print(base)
@@ -173,29 +294,42 @@ def dump(path, first, verbose):
                 print(
                     f"    gr{gr}ch{ch} part2_3={g['part2_3_length']:4d} "
                     f"big_values={g['big_values']:3d} gain={g['global_gain']:3d} "
-                    f"sfc={g['scalefac_compress']:2d} wsf={g['window_switching']}"
+                    f"sfc={g['scalefac_compress']:2d} wsf={g['window_switching']} "
+                    f"tables={g['table_select']}"
                 )
-    bitrates = {h["bitrate"] for _, h, _, _ in frames}
-    samples = len(frames) * 1152
+    summary = report["summary"]
     print(
-        f"summary: {len(frames)} frames, {sum(h['size'] for _, h, _, _ in frames)} bytes, "
-        f"{samples} samples/channel ({samples / 44100:.3f}s at 44.1kHz), "
-        f"bitrates={sorted(b // 1000 for b in bitrates)}kbps, "
-        f"constant={len(bitrates) == 1}"
+        f"summary: {summary['frames']} frames, {summary['bytes']} bytes, "
+        f"{summary['samples_per_channel']} samples/channel "
+        f"({summary['seconds_at_first_rate']:.3f}s at 44.1kHz), "
+        f"bitrates={[value // 1000 for value in summary['bitrates']]}kbps, "
+        f"constant={summary['constant_bitrate']}"
     )
-    return 0
+    return 2 if report["warnings"] else 0
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("file")
-    parser.add_argument("--first", type=int, default=10)
+    parser.add_argument("--first", type=int, default=10, help="print at most N frames; -1 for all")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--json", action="store_true", help="print the full report as JSON")
+    parser.add_argument("--strict", action="store_true", help="exit 2 when any warning is found")
     args = parser.parse_args()
+    if args.first < -1:
+        parser.error("--first must be -1 or non-negative")
     if not os.path.exists(args.file):
         print(f"no such file: {args.file}", file=sys.stderr)
         return 1
-    return dump(args.file, args.first, args.verbose)
+    try:
+        report = analyze(args.file)
+    except OSError as exc:
+        print(f"cannot read {args.file}: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 2 if args.strict and report["warnings"] else 0
+    return dump(args.file, args.first, args.verbose, report)
 
 
 if __name__ == "__main__":
