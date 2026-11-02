@@ -341,3 +341,27 @@ test "huffman : a coefficient past the largest extent cannot be coded" {
   }
   assert_eq(written, granule_cost(values, table, 2))
 }
+
+///|
+test "huffman : a granule with no count1 region can still be written" {
+  // 288 pairs is the whole spectrum. There is then no count1 tail, and calling
+  // the count1 writer with an empty array used to raise BadLength, which made
+  // broadband transients fail to encode at all. Found by the impulse case in
+  // tools/selftest.py.
+  let values = Array::make(576, 0)
+  for index = 0; index < 576; index = index + 1 {
+    values[index] = if index % 2 == 0 { 1 } else { -1 }
+  }
+  let table = choose_table(values, 288)
+  assert_true(table >= 1)
+  let w = @bits.BitWriter::new()
+  let written = write_granule(w, values, table, 288) catch {
+    (_ : HuffmanError) => {
+      assert_true(false)
+      return
+    }
+  }
+  assert_eq(written, granule_cost(values, table, 288))
+  // Every pair carries two sign bits plus at least one code bit.
+  assert_true(written >= 288 * 3)
+}

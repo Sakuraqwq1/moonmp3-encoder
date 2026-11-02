@@ -52,6 +52,24 @@ CANDIDATES = {
         "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
         "  if line == 0 {\n    return 0.0\n  }\n  spectrum[18 - line]"
     ),
+    "mirror_interp_hi": (
+        "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
+        "  let a = spectrum[17 - line]\n"
+        "  if line == 0 {\n    return a\n  }\n"
+        "  a * 0.5 + spectrum[18 - line] * 0.5"
+    ),
+    "mirror_interp_lo": (
+        "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
+        "  let a = spectrum[17 - line]\n"
+        "  if line == 17 {\n    return a\n  }\n"
+        "  a * 0.5 + spectrum[16 - line] * 0.5"
+    ),
+    "mirror_interp_sym": (
+        "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
+        "  let mut acc = spectrum[17 - line] * 0.5\n"
+        "  if line > 0 {\n    acc = acc + spectrum[18 - line] * 0.25\n  }\n"
+        "  if line < 17 {\n    acc = acc + spectrum[16 - line] * 0.25\n  }\n  acc"
+    ),
     "reverse_edges_intact": (
         "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
         "  if line < 2 || line > 15 {\n    return spectrum[line]\n  }\n  spectrum[17 - line]"

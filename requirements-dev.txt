@@ -1,3 +1,7 @@
 # Python-side lab dependencies (the MoonBit package itself has no dependencies).
 numpy>=1.24
 soundfile>=0.12
+# PyAV ships an ffmpeg build. It is used only as a second, independent MP3 decoder
+# in tools/crossdecode.py, so "the decoders agree" is asserted against something
+# that shares no code with mpg123.
+av>=12

@@ -44,6 +44,8 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 - `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对（残差 1e-16）。
 - `tools/huffman_tables.py` 校验 15 张 big_values 表（Kraft 和、码字冲突、表尺寸）。
 - `tools/odd_band.py` 实测奇数子带的映射，用 SNR 而不是"频率对不对"来选。
+- `tools/crossdecode.py` 用 mpg123 与 ffmpeg 两个独立解码器解同一条流并比对（当前相关度 1.000000）。
+- `tools/sweep_snr.py` 扫全频段 SNR，专治"抽查几个整数频率都正常"的错觉。
 - `tools/snr.py` 自动搜索解码延迟，测量逐声道和整体 SNR。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
 - `tools/selftest.py` 验证上述工具本身没有回归。

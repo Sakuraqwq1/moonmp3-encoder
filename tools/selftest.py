@@ -378,6 +378,66 @@ class AnalysisTests(unittest.TestCase):
         self.assertGreaterEqual(report["per_channel"][0]["correlation"], 0.99)
 
 
+class BoundaryMatrixTests(unittest.TestCase):
+    """Stage 2's boundary matrix: block edges, full scale, transients, decoders."""
+
+    def _encode_pcm(self, samples, channels):
+        import base64
+
+        payload = base64.b64encode(
+            np.clip(np.round(samples), -32768, 32767).astype(np.int16).tobytes()
+        )
+        return mp3lab.extract_payload(mp3lab.run_cli("encode", payload.decode(), str(channels)))
+
+    def test_block_edges_1151_1152_1153(self):
+        # One sample either side of the 1152-sample frame is where an off-by-one
+        # in the frame count shows up as a wrong decoded length or a wrong
+        # frequency, so all three are checked for both channel counts.
+        # libsndfile cannot open a one-frame stream, so the boundary is probed at
+        # the second frame (2*1152 +- 1); the one-frame case is covered by mp3dump.
+        for count in (2 * 1152 - 1, 2 * 1152, 2 * 1152 + 1):
+            for channels in (1, 2):
+                index = np.arange(count)
+                tone = np.zeros((count, channels))
+                for channel in range(channels):
+                    freq = 440.0 + 220.0 * channel
+                    tone[:, channel] = 0.5 * 32767 * np.sin(2 * np.pi * freq * index / 44100.0)
+                payload = self._encode_pcm(tone.reshape(-1), channels)
+                data, rate = mp3lab.decode_mp3(payload)
+                self.assertEqual(rate, 44100)
+                self.assertEqual(data.shape[1], channels)
+                expected = ((count + 1151) // 1152) * 1152
+                self.assertEqual(data.shape[0], expected)
+                self.assertLess(float(np.max(np.abs(data))), 1.30)
+
+    def test_full_scale_and_impulse_stay_finite(self):
+        for percent in (99, 100):
+            payload = mp3lab.extract_payload(
+                mp3lab.run_cli("sine", "16", "440", str(percent), "1")
+            )
+            data, _ = mp3lab.decode_mp3(payload)
+            self.assertTrue(np.all(np.isfinite(data)), percent)
+            self.assertLess(float(np.max(np.abs(data))), 2.0, percent)
+        impulse = np.zeros(4096)
+        impulse[2048] = 32767.0
+        payload = self._encode_pcm(impulse, 1)
+        data, _ = mp3lab.decode_mp3(payload)
+        self.assertTrue(np.all(np.isfinite(data)))
+        self.assertGreater(float(np.max(np.abs(data))), 0.01)
+
+    def test_two_decoders_agree(self):
+        import crossdecode
+
+        payload = mp3lab.extract_payload(mp3lab.run_cli("sine", "16", "440,660", "50", "2"))
+        report = crossdecode.compare(payload)
+        self.assertTrue(report["agree"], report)
+        self.assertEqual(report["rate"]["mpg123"], report["rate"]["ffmpeg"])
+        for entry in report["per_channel"]:
+            self.assertGreaterEqual(entry["correlation"], 0.9999, entry)
+            self.assertAlmostEqual(
+                entry["dominant_hz"]["mpg123"], entry["dominant_hz"]["ffmpeg"], delta=1.0
+            )
+
 class CliTests(unittest.TestCase):
     def test_cli_reports_version(self):
         output = mp3lab.run_cli("version")

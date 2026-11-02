@@ -99,7 +99,23 @@ fn plan_with_budget(lines : Array[Double], budget : Int32) -> GranulePlan {
       low = mid + 1
     }
   }
-  plan_granule(lines, low)
+  let chosen = plan_granule(lines, low)
+  if chosen.cost <= budget {
+    return chosen
+  }
+  // The bisection assumes the cost falls monotonically with the gain. That is
+  // nearly true but not exactly — a broadband transient can make a mid gain cost
+  // more than a coarser one — so walk upward to the first gain that really fits,
+  // then fall back to the fully zeroed granule, which no budget can overflow.
+  let mut gain = low + 1
+  while gain <= 255 {
+    let candidate = plan_granule(lines, gain)
+    if candidate.cost <= budget {
+      return candidate
+    }
+    gain = gain + 1
+  }
+  plan_granule(lines, 255)
 }
 
 ///|

@@ -295,6 +295,11 @@ pub fn write_granule(
     bits = bits + write_pair(w, table, values[pair * 2], values[pair * 2 + 1])
   }
   let tail_start = big_values * 2
+  if tail_start >= 576 {
+    // A granule can spend its whole length in big_values; there is then no
+    // count1 region at all, and the writer must not be called with nothing.
+    return bits
+  }
   let tail = Array::make(576 - tail_start, 0)
   for index = tail_start; index < 576; index = index + 1 {
     tail[index - tail_start] = values[index]
