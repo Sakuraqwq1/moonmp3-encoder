@@ -8,11 +8,11 @@
 | --- | --- | --- | --- |
 | 1 | MoonBit 为主语言，`moonc` ≥ 0.10.16 | 纯 MoonBit 实现，零 FFI；本地工具链 v0.10.16，CI 安装最新版 | 满足 |
 | 2 | GitHub 公开、提交记录清晰 | `Sakuraqwq1/moonmp3-encoder` 公开；版本有标签和 CHANGELOG | 满足 |
-| 3 | 源代码结构清晰，能完成声明的核心功能 | PCM → 多相滤波器组 → 长块 MDCT → 量化 → Huffman → 帧封装全链路可听；分析层经独立验证是解码器链的逆（白噪声 84.44 dB） | 满足 |
+| 3 | 源代码结构清晰，能完成声明的核心功能 | PCM → 多相滤波器组 → 长/短块 MDCT + 窗切换 → scalefactor 量化 → Huffman → 帧封装全链路可听；分析层经独立验证是解码器链的逆（白噪声 84.44 dB） | 满足 |
 | 4 | README 说明目标、安装、用法、示例，可复现 | README 已改为真实编码状态与实测数字，`moon add` + `encode()` 示例可直接跑 | 满足 |
 | 5 | CI 覆盖检查、构建、测试 | check（三平台）、build（native/wasm-gc）、tools（Python）共 6 个作业 | 满足 |
 | 6 | 至少一个可运行示例或最小样例 | `moon run cmd/main -- selftest` / `sine` / `silent`，CI 在跑 | 满足 |
-| 7 | 完整测试覆盖核心功能路径 | `moon test` 29 例（滤波组、MDCT、量化器、Huffman、边界）；`tools/selftest.py` 32 例（含分析层逐线参考、闭环 SNR、频谱、帧网格）；`verify.py structure` 12 例 | 满足 |
+| 7 | 完整测试覆盖核心功能路径 | `moon test` 42 例（滤波组、长短块 MDCT/窗切换、量化器、Huffman、scalefactor、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
 | 8 | 发布到 mooncakes.io | 0.1.1 已发布，发布包与仓库逐字节核对过；0.2.0 待阶段 2 完成 | 满足 |
 | 9 | OSI 许可证；移植须符合原许可证 | Apache-2.0；原创实现，未读取 LAME/shine；来源见 `docs/provenance.md` | 满足 |
 
@@ -28,7 +28,7 @@
 - [x] 主频/声道/长度正确，不只是“有声音”（8 个频点偏差 ≤0.12 Hz；单/立体声长度与声道数逐一核对）。
 - [x] 单声道和立体声都通过，`mp3dump --strict` 无 warning（10 个 fixture 全部 strict 通过）。
 - [x] 帧网格仍是精确 128 kbps CBR，`verify.py structure` 不回归（200 帧 83591 字节 = 累积公式值）。
-- [x] 有至少一组可复现的 SNR 数据和对应 fixture（440 Hz 21.95 dB @延迟 1057；`tools/sweep_snr.py` 全段 21.8–25.8 dB）。
+- [x] 有至少一组可复现的 SNR 数据和对应 fixture（440 Hz 29.40 dB @延迟 1057；`tools/sweep_snr.py` 全段 27.60–32.44 dB）。
 - [x] README 更新为真实编码命令，不再写着“主数据全为零”。
 - [ ] 申报书由本人撰写，功能声明集中为单章节，明确边界和非目标。**（本人任务）**
 - [ ] 重新确认生态中仍无 MP3 编码器，引用可查的搜索证据。**（本人任务；仓库里只有 2026-11-01 的检索记录）**
@@ -36,15 +36,15 @@
 ## 三、阶段 2 完成后的初审门槛
 
 - [x] 正弦 SNR ≥ 20 dB，音乐样本 SNR ≥ 15 dB；数值附参考文件和解码器。
-      （正弦全段 26.8–32.3 dB；multitone 26.1 dB；见 `docs/stage2-progress.md`，解码器 libsndfile/mpg123，延迟 1057）
+      （正弦全段 27.6–32.7 dB；multitone 28.7 dB；见 `docs/stage2-progress.md`，解码器 libsndfile/mpg123，延迟 1057）
 - [x] 单/双声道、`1152±1`、静音、满幅、瞬态、长音频矩阵通过。
-      （`tools/selftest.py` 32 例；满幅解码峰值 1.12 有过冲，不崩但待处理）
+      （`tools/selftest.py` 34 例；输入峰值 50–100 % 时满幅解码峰值均 ≤1.00，过冲已由连续 headroom 消除，满幅电平损失 ≤1.3 dB）
 - [x] 至少两个独立解码器结果一致（延迟对齐后比较长度和波形）。`tools/crossdecode.py`：相关度 1.000000
 - [x] reservoir 连续多帧不越界，长序列不产生爆音。
       （39 帧实测 `main_data_begin` = 0/232/477/511…，全在 0..511；mpg123 与 ffmpeg 相关度 1.000000、差 125.7 dB；见 `docs/stage2-progress.md`）
-- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 30 例）
+- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 42 例）
 - [x] 对比同码率 LAME 的体积和 SNR，差距如实写入 README。
-      （PyAV `libmp3lame` 128 kbps mono，五个探针：27.6/26.1/26.8/12.7/27.4 dB vs 26.0/26.0/26.0/8.5/26.0 dB）
+      （PyAV `libmp3lame` 128 kbps mono，五个探针：28.30/27.77/28.34/13.51/17.92 dB vs 26.03/26.01/26.00/8.49/26.02 dB；满幅探针因防削顶余量为 17.92 dB，归一化到同一电平后 28.92 dB 高于 LAME；由 `tools/lame_ref.py` 复现）
 - [ ] 发布 0.2.0 或更高版本，CI 全绿，仓库与发布包一致。**（阶段 2 收口动作）**
 
 ## 四、验收期保持开发

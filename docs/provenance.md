@@ -22,8 +22,8 @@
 | 帧头字段、帧长公式、边信息布局 | 已实现 | ISO/IEC 11172-3（MPEG-1 Audio） |
 | 分析窗 `C[512]` | 已接入 | `hajimehoshi/go-mp3`（Apache-2.0）`synthDtbl`，见上；数值为 ISO/IEC 11172-3 Annex B 规范数据。仓库里存的是合成窗 `D`，分析窗 `C = D/32`（Table C.1）在 `analysis.mbt` 里按比例应用 |
 | 解码器 antialias 系数（Table B.9） | 已接入（编码器侧做其逆） | ISO/IEC 11172-3 Table B.9 规范数值，见上 |
-| 长块 MDCT、窗切换 | 长块已实现，窗切换未实现 | ISO/IEC 11172-3 §2.4.2.2 |
-| scalefactor band 表 | 尚未接入（当前 `scalefac_compress = 0`，不传 scalefactor） | ISO/IEC 11172-3 |
+| 长块 MDCT、窗切换 | 长块与 start/short/stop 窗切换均已实现 | ISO/IEC 11172-3 §2.4.2.2 |
+| scalefactor band 表 | 长块 21 带与短块 12 带均已接入 | ISO/IEC 11172-3 Table B.8（44.1 kHz） |
 | Huffman count1 表 B | 已实现 | 依据 ISO/IEC 11172-3 Table B.7；并用 minimp3（CC0-1.0）`tab33` 数据交叉核对，未复制其实现代码 |
 | Huffman big-values 表 | 已实现 | `hajimehoshi/go-mp3`（Apache-2.0）`internal/huffman/huffman.go`，blob 与三重校验见上；linbits 用 minimp3（CC0-1.0）交叉核对 |
 | 心理声学模型 | 不在 v1 范围 | 不实现，质量判据使用固定 SNR |

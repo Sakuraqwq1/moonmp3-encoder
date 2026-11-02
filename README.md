@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
-> 状态：**阶段 2 进行中（量化器已修正，scalefactor 待做）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪。分析层是**已验证解码器链的逆**（无量化闭环白噪声 84.44 dB），全频段端到端 SNR **26.8–32.3 dB**（440 Hz 27.9 dB），同码率对比 LAME 128 kbps 在正弦/多音/扫频/白噪声/满幅五个探针上都不差；详见 `docs/stage2-progress.md`。仍缺 scalefactor band、位保留区和短块。
+> 状态：**阶段 2 收口**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长/短块 MDCT 与窗切换、big_values + count1 Huffman、`global_gain` 搜索、21 个长块 scalefactor band、瞬态短块切换与近满幅 headroom 都已就绪。分析层是**已验证解码器链的逆**（无量化闭环白噪声 84.44 dB），全频段端到端 SNR **27.6–32.7 dB**（440 Hz 29.3 dB），同码率对比 LAME 128 kbps 在正弦/多音/扫频/白噪声四个探针上优于 LAME，满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB，归一到同一电平后 28.92 dB 高于 LAME）；详见 `docs/stage2-progress.md`。
 
 ## 为什么需要它
 
@@ -16,7 +16,7 @@ MoonBit 生态里已有纯 MoonBit 的 MP3 **解码器**（`enanandesu/mp3`）�
 
 - MPEG-1 Layer III，44100 Hz，单声道 / 立体声
 - 固定比特率 128 kbps
-- 长块（`block_type = 0`）；短块、联合立体声、VBR 留给后续版本
+- 长块 + 瞬态短块/窗切换（`block_type` 0/1/2/3）；联合立体声、VBR 留给后续版本
 - 明确不做：解码（生态已有）、播放与设备 IO
 
 ## 用法
@@ -31,13 +31,26 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
-> 当前是阶段 2 的中间状态：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 26.8–32.3 dB，同码率下五个探针都不低于 LAME；但还没有 scalefactor band、位保留区和短块，白噪声这类平坦信号只有 12.7 dB，满幅输入解码峰值 1.12（过冲）。要用于真实音乐导出，请等 scalefactor 与短块落地。
+> 当前是阶段 2 的收口状态：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 27.6–32.7 dB；正弦/多音/扫频/白噪声四个探针优于同码率 LAME；满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB），归一到同一电平后 28.92 dB 高于 LAME；已接入 scalefactor band、位保留区和瞬态短块切换，输入峰值 50–100 % 时解码峰值全部严格保持在 ≤1.00 以内（代价是满幅输出电平低约 1.2 dB）。白噪声这类平坦信号约 13 dB，属 128 kbps 单声道下量化格点的固有边界，不是结构缺陷。
+
+### 同码率对比（PyAV libmp3lame 128 kbps mono CBR，0.18 s 片段，libsndfile 解码，延迟对齐）
+
+| 探针 | 本编码器 | LAME 128k | 差异 | 说明 |
+| --- | ---: | ---: | ---: | --- |
+| 440 Hz 正弦 | 28.30 dB | 26.03 dB | +2.27 dB | 优于 LAME |
+| multitone | 27.77 dB | 26.01 dB | +1.76 dB | 优于 LAME |
+| 扫频 | 28.34 dB | 26.00 dB | +2.34 dB | 优于 LAME |
+| 白噪声 | 13.51 dB | 8.49 dB | +5.02 dB | 优于 LAME |
+| 满幅 99 % 正弦 | 17.92 dB | 26.02 dB | -8.10 dB | 防削顶余量（归一化后 28.92 dB 高于 LAME） |
+
+> 复现工具：`python tools/lame_ref.py`（支持 `--json`）。
 
 ## 验证方式
 
 编码器的正确性不靠"能跑"判断：
 
 - `tools/verify.py structure` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码输出，检查帧网格、长度和静音正确性。
+- `tools/lame_ref.py` 对比 PyAV `libmp3lame` 128k mono CBR 在五个探针上的表现（支持 `--json` 输出）。
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
 - `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。
 - `tools/probe_lines.py` 逐条激励频线并测量解码后的频率，产出 `docs/line-frequencies.md` 那张映射表。

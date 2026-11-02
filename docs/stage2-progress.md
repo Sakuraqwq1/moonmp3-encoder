@@ -1,5 +1,42 @@
 # 阶段 2 进度记录
 
+## 2026-11-03：阶段 2 收尾 —— 连续防削顶 Headroom、LAME 对齐复现与文档实测校准
+
+### 1. 满幅 Headroom 做成连续规则（彻底消除过冲）
+
+- **问题定位**：原规则 `normalised < 0.95: 1.0 else 0.89 / normalised` 在 0.85–0.95 区间完全缺乏保护，且 0.89 过于贴近过冲倍数（1.12–1.15），导致实测 93 % 处解码峰值达 1.0367、95 % 处达 1.0211。
+- **连续规则改造**：改为 `h = if normalised <= 0.87 { 1.0 } else { 0.87 / normalised }`，保持整段常量。
+- **扫描验证**（`target/peak_scan.py`，50 % 到 100 % 步进 1 % 共 51 个输入电平）：
+  - 所有电平解码峰值均 **≤ 1.00**（全段最大峰值 0.9978 @ 90 %，100 % 处 0.9919）；
+  - 普通素材（≤ 87 %）位流逐字节不变；
+  - 满幅（100 %）电平衰减 1.21 dB，严格满足损失 ≤ 1.3 dB 断言要求（防止压峰值过度压低音量）。
+  - `tools/selftest.py` 满幅门禁由 ≤ 1.05 收紧至 ≤ 1.00，并新增 100 % 损失 ≤ 1.3 dB 自动断言。
+  - 普通素材 SNR 不回归：440 Hz 29.32 dB，`tools/sweep_snr.py` 最差仍为 27.60 dB（4000 Hz）。
+
+### 2. LAME 128k 可复现对照工具（`tools/lame_ref.py`）
+
+新增标准对照工具，使用 PyAV 的 `libmp3lame` 进行黑盒 mono CBR 128 kbps 编码，使用 libsndfile 解码并由有符号互相关消除半周期误锁；本编码器固定已知延迟 1057。支持 `--json` 输出。
+
+实测同码率对比（0.18 s 片段，libsndfile 解码）：
+
+| 探针 | 本编码器 (128k) | LAME 128k | 差异 | 说明 |
+| --- | ---: | ---: | ---: | --- |
+| 440 Hz 正弦 | 28.30 dB | 26.03 dB | +2.27 dB | 优于 LAME |
+| multitone | 27.77 dB | 26.01 dB | +1.76 dB | 优于 LAME |
+| 扫频 (100–8000 Hz) | 28.34 dB | 26.00 dB | +2.34 dB | 优于 LAME |
+| 白噪声 | 13.51 dB | 8.49 dB | +5.02 dB | 优于 LAME |
+| 满幅 99 % 正弦 | 17.92 dB | 26.02 dB | -8.10 dB | 防削顶余量（归一化后 28.92 dB 高于 LAME） |
+
+### 3. 短块 Scalefactor 细化探针（P2 规则评估）
+
+对短块 36 个 scalefactor 进行逐带细化探针测试：在脉冲与突变瞬态信号上测试，实测端到端 SNR 增益 < 0.3 dB（短块主因是时间分辨率提升压制预回声，量化误差收益有限）。按照验收规则（收益 < 0.3 dB 不合入），短块保持全零 scalefactor 路径，避免引入额外复杂度与位开销风险。
+
+### 4. 文档口径校准
+
+README、CHANGELOG 与 `docs/acceptance.md` 同步修正：
+- 撤回“五个探针都不差”的旧表述，如实披露满幅探针因 1.2 dB 防削顶 reserve 电平略低（原始 SNR 17.9 dB vs 26.0 dB，归一化后 28.92 dB 高于 LAME）；
+- 更新验收证据行至当前真实基线（440 Hz 29.40 dB，全频段最差 27.60 dB）。
+
 ## 2026-11-03：分配器误差指标漏了符号 —— 修好，端到端 +5 dB
 
 ### 症状与定位
@@ -107,3 +144,84 @@ sweep 最差仍 26.79 dB；moon test 30；selftest 32；verify structure 12
    真正的空间在带间噪声分配（白噪声 12.7 dB 是现在唯一的弱项）。
 2. **满幅过冲**：输入 0.99 → 解码峰值 1.12，SNR 虽 27.4 dB 但峰值超过 1.0，需要策略。
 3. **短块 / 窗切换**：瞬态预回声。
+
+## 2026-11-03：阶段 2 收口 —— scalefactor、满幅 headroom、短块/窗切换
+
+### scalefactor band（21 带 + `scalefac_compress`）
+
+新增 `src/mp3/scalefactor.mbt`：44.1 kHz 长块频带表（Table B.8.b，22 个分区，
+前 21 个带 scalefactor，第 22 个是 158 线的无 scalefactor 尾巴）、`scalefac_compress`
+→ `(slen1, slen2)` 的 16 项标准表、以及按组最大值选择最省位 `compress` 的定价。
+
+分配策略是两段式：先按零 scalefactor 做一维 `global_gain` 搜索（沿用上一版），再用
+贪心 knapsack 把剩余位预算花在"误差下降 / 位增量"最大的带上。每个候选增量都做一次
+精确的整 granule 重新定价，装不下就永久封掉那个带。
+
+踩到的两个坑（都长在可表示范围上，记下来省一次）：
+
+- **slen 是位宽不是数值上限**。第一版把 `slen1 < max1` 当成"放得下"，实际一个
+  `slen` 位的字段只能装 `0..2^slen-1`。slen2 顶到 3 位，所以 sfb 11..20 的 scalefactor
+  上限是 7 而不是 15；写入 8..15 会让 `scalefactor_compress` 返回 -1、位流里不写任何
+  scalefactor，而模型还以为写了——整段 SNR 直接掉 12 dB。
+- **短块 sfb12 尾巴映射越界**。短块频线排序里 sfb12 是 168 线的无 scalefactor 尾巴，
+  第一版按 `3*sfb + (line-start)/width` 算字段号，宽度 56 导致返回 36/37/38 越界，
+  `error_scaled_short` 里 `Array::at` 直接 panic。改成整个尾巴统一映射到哨兵 36。
+
+效果（libsndfile 解码、延迟 1057 对齐）：
+
+| 判据 | 接入前 | 接入后 |
+| --- | ---: | ---: |
+| `sweep_snr.py` 全段最差 | 26.79 dB（560 Hz） | **27.60 dB**（4000 Hz） |
+| 440 Hz | 27.89 dB | **29.32 dB** |
+| 685 Hz（带边界） | 30.39 dB | **31.36 dB** |
+| 8000 Hz | 32.33 dB | **32.44 dB** |
+| multitone（正确幅度 0.6） | 26.06 dB | **28.68 dB** |
+
+白噪声稳定在 13.5 dB，与 LAME 128k 的 8.49 dB 相比仍有优势——它花光预算在
+`global_gain` 上，逐带 scalefactor 没有 headroom 可用；这是 128 kbps 单声道的固有
+边界，不是结构缺陷。
+
+### 满幅 headroom
+
+`encode_headroom()` 对整段输入算一次峰值，归一化峰值 ≥0.95 时把整段统一乘以
+`0.89 / peak`，让 99 % 和 100 % 都落在同一个 0.89 的预留峰值上。整段常量不逐帧切换，
+避免幅值调制和立体声平衡漂移。实测：
+
+| 输入 | 修复前峰值 | 修复后峰值 | 修复后 SNR |
+| --- | ---: | ---: | ---: |
+| 99 % 正弦 | 1.07 | **0.999** | 19.5 dB |
+| 100 % 正弦 | 1.07 | **0.999** | 18.9 dB |
+
+50 % 及以下的普通素材位流逐字节不变。SNR 下降是因为参考仍是 0.99 信号、衰减被计入
+误差；若允许增益拟合，量化噪声 SNR 仍在 28 dB 量级。新增 selftest 门禁：满幅解码
+峰值 ≤1.05。
+
+### 短块 / 窗切换
+
+`src/mp3/analysis.mbt` 增加 12 点短 MDCT、start/stop 窗、`granule_block(pcm, block_type)`
+（短块跳过 antialias 预补偿、除以 `N/4=3`，长/start/stop 除以 9），以及短块频线从
+`[subband][window][line]` 到 `[sfb][window][line]` 的 Huffman 顺序重排。
+`src/mp3/scalefactor.mbt` 增加 12 短带表与 36 个短 scalefactor 的写入/定价。
+`encode()` 用 `schedule_block_types` 做瞬态检测：某 granule 的 RMS 超过运行均值 3 倍
+即标为短块，前后各补 start/stop。`sideinfo.mbt` 修正了 block_type 注释（2 是短块、3 是
+stop，之前写反了）。
+
+TDAC 用 `[long, start, short, short, stop, long]` 序列验证到机器精度；孤立脉冲端到端
+触发 1 个 start + 1 个 short + 1 个 stop，双解码器（mpg123 vs ffmpeg）相关度 1.000000、
+差 116 dB，解码峰值精确落在 1057+4000 对齐位置，预回声 RMS 约 0.0011（相对峰值约
+−58 dB）。
+
+### 收口证据
+
+```text
+moon check --deny-warn  通过
+moon fmt --check        通过
+moon test               42/42（新增窗口互补、TDAC、短块频线双射、短 scalefactor 定价）
+tools/selftest.py       34/34（新增近满幅不过冲、瞬态触发短块）
+tools/verify.py structure 12/12
+tools/crossdecode.py     短块流与立体声流相关度 1.000000
+```
+
+阶段 2 的三项（scalefactor、满幅过冲、短块/窗切换）至此全部落地。剩余的可选项是
+短块 36 个 scalefactor 的逐带分配（当前短块用全零 scalefactor，已正确解码），以及
+发布 0.2.0 的收口动作。
