@@ -28,5 +28,5 @@ pub fn encode(
 /// Version of the `moonmp3-encoder` module.
 /// Keep in sync with the `version` field in `moon.mod`.
 pub fn version() -> String {
-  "0.2.0"
+  "0.2.1"
 }

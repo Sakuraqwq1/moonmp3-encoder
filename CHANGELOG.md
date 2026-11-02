@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-03
+
+- 包描述修正：`moon.mod` 的 description 还写着"stream writer ... decodable
+  silence; audio coding is under development"，与 0.2.0 的实际能力矛盾；改为
+  "MPEG-1 Layer III encoder ... 27.6-32.7 dB SNR"。0.2.0 的代码内容一字未改，
+  这里只改包元数据，所以单独发一个补丁版本
+- 版本号三处同步（`moon.mod` / `lib.mbt` / 本节）；`tools/check_release.py` 仍
+  blocking=0
+
 ## [0.2.0] - 2026-11-03
 
 - 音频编码真正落地：多相分析滤波器组与长块 MDCT 现在是**已验证解码器链的逆**
