@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
-> 状态：**阶段 1 收尾中（真实量化已接入）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪，440 Hz 正弦的 SNR 从 10.06 dB 提升到 **21.73 dB**。仍缺 scalefactor band 与逐带步长，且带边缘的音（如 660 Hz）明显偏低，详见 `docs/stage1-progress.md`。
+> 状态：**阶段 1 收尾中（分析层已修正，量化待升级）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪。分析层现在是**已验证解码器链的逆**：无量化闭环白噪声 84.44 dB、685 Hz 96.66 dB，全频段端到端 SNR **21.8–25.8 dB**（最差 21.83 @ 4000 Hz），685 Hz 从 −2.08 dB 回到 23.04 dB。仍缺 scalefactor band 与逐带步长，详见 `docs/stage1-progress.md`。
 
 ## 为什么需要它
 
@@ -31,7 +31,7 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
-> 当前是阶段 1 的中间状态：稳态音调主频正确、SNR 过 20 dB 门槛（440 Hz 22.06 dB@满幅），但还没有 scalefactor band，带边缘的音质明显偏低，满幅输入有轻微削波。要用于真实音频导出，请等 scalefactor 与码率控制落地。
+> 当前是阶段 1 的中间状态：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 21.8–25.8 dB，带边缘不再塌陷；但还没有 scalefactor band，量化是一个 granule 一个 `global_gain`、系数上限 15，满幅输入有轻微削波。要用于真实音频导出，请等 scalefactor 与码率控制落地。
 
 ## 验证方式
 
@@ -41,12 +41,13 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
 - `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。
 - `tools/probe_lines.py` 逐条激励频线并测量解码后的频率，产出 `docs/line-frequencies.md` 那张映射表。
-- `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对（残差 1e-16）。
+- `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对（残差 2e-16）。
 - `tools/huffman_tables.py` 校验 15 张 big_values 表（Kraft 和、码字冲突、表尺寸）。
-- `tools/odd_band.py` 实测奇数子带的映射，用 SNR 而不是"频率对不对"来选。
+- `tools/decoder_ref.py` 复现参考解码器（与 libsndfile 吻合 127.5 dB），再用无量化闭环给分析层打分。
+- `tools/cross_spec.py` 把交付的分析子带输出接进已验证解码器，判断它是不是解码器的逆，并证明 `(−1)^n` 是承重的。
 - `tools/crossdecode.py` 用 mpg123 与 ffmpeg 两个独立解码器解同一条流并比对（当前相关度 1.000000）。
 - `tools/sweep_snr.py` 扫全频段 SNR，专治"抽查几个整数频率都正常"的错觉。
-- `tools/snr.py` 自动搜索解码延迟，测量逐声道和整体 SNR。
+- `tools/snr.py` 测量逐声道和整体 SNR，可按已知延迟（本编码器 1057）对齐。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
 - `tools/selftest.py` 验证上述工具本身没有回归。
 - `tools/doctor.py` 检查 MoonBit、libsndfile、MP3 解码后端和素材是否就绪。

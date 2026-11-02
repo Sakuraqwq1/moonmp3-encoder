@@ -102,7 +102,15 @@ python tools/analysis_ref.py --compare --freq 1000 --granule 6
 
 `tools/analysis_ref.py` 用 numpy 从定义式独立重算多相滤波器组与长块 MDCT
 （不复用 MoonBit 的矩阵或折叠技巧），再与 `moon run cmd/main -- lines ...` 的输出
-逐线比对。当前残差在 1e-16 量级（相对误差 ~4e-16），即双精度的机器精度。
+逐线比对。当前残差在 1e-16 量级（相对误差 ~2e-16），即双精度的机器精度。
+
+参考实现里的五件事都与 `analysis.mbt` 一一对应，缺一条就会被 `--compare` 抓出来：
+
+1. 分析矩阵 `cos((2m+1)(k−16)π/64)`（不是 `(16+k)` 那个合成侧形式）；
+2. 分析窗 `C = D/32`（`window.mbt` 里存的是合成窗 `D`，峰值 1.144989014）；
+3. 奇数子带在奇数步乘 `(−1)^n`（Layer III 方向）；
+4. 频线除以 `SynthesisGain = 9`；
+5. 频线上的 `antialias` 预补偿（解码器 Table B.9 那八对 Givens 的转置）。
 
 ## 6. 窗口表来源校验
 
@@ -140,16 +148,17 @@ python tools/decoder_ref.py --score --freq 685
 吻合 **127.5 dB**（int16 打印上限），所以这个模型**就是**解码器。
 
 `--score` 把候选分析层接上这个解码器、**中间不做任何量化**，测闭环 SNR。这解决了一个
-一直缺的东西：判断"折叠对不对"不再靠肉眼或端到端 SNR 猜。当前检入的分析层得分：
+一直缺的东西：判断"折叠对不对"不再靠肉眼或端到端 SNR 猜。`--score` 打的是
+`analysis_model()`，即当前检入 `analysis.mbt` 的那一套：
 
 ```text
-440 Hz  35.09 dB     685 Hz   0.07 dB   <- 带边缘
-1000 Hz 46.74 dB     1390 Hz  0.68 dB   <- 带边缘
-3000 Hz 32.86 dB     8000 Hz 40.18 dB
+白噪声  84.44 dB     685 Hz  96.66 dB    440 Hz 96.86 dB
+1000 Hz 97.45 dB     1390 Hz 97.06 dB    3000 Hz 96.71 dB
+8000 Hz 97.85 dB     延迟 1057   拟合增益 1.00000
 ```
 
-带边缘在**无量化**的闭环里就塌了，所以它是结构性缺陷，跟位预算、量化器无关。
-任何替换方案必须在每个频率都拿到 ~35 dB，包括 689 Hz 边界两侧。
+（对比：修复前的分析层白噪声 1.02 dB、685 Hz 0.07 dB。）延迟 1057 = 滤波器组 481 +
+半块重叠 576。整套系统在**无量化**时就是解码器的逆，剩下的端到端差距全部来自量化。
 
 ## 9. Huffman 表来源校验
 
@@ -163,18 +172,13 @@ python tools/huffman_tables.py --fetch    # 重新拉取上游（需要网络）
 编码侧 `(x,y) -> (码长, 码字)`，并在写出前校验 Kraft 和、码字冲突与表尺寸；展开结果
 的 SHA-256 与实测的每张表 extent/最大码长都记录在 `docs/provenance.md`。
 
-## 10. 奇数子带映射实测
+## 10. 奇数子带方向（历史工具，已移除）
 
-```bash
-python tools/odd_band.py            # 逐个候选映射实测 SNR，报告最优
-python tools/odd_band.py --report   # 只测当前检入的那一版
-```
-
-分析滤波器组是伪 QMF，奇数子带在带内是频谱反的。把这个反向修正回来有多种候选
-（identity / 纯倒序 / 倒序加变号 / 倒序 18-k 等），它们在"解码频率对不对"上分不出来，
-只有 SNR 能分——这一步就是量它。脚本会把候选写进 `analysis.mbt` 的
-`odd_band_value`、重编、解码、打分，结束后恢复原样。当前最优：**纯倒序**（+16 dB，
-而"倒序 + 交替变号"是 −1.7 dB）。
+`tools/odd_band.py` 曾把 11 个候选线域映射逐个写进 `analysis.mbt` 的 `odd_band_value`，
+重编、解码、打分。它的结论（纯倒序 +16 dB，其余更差）在当时是对的，但整条路线是错的：
+带内倒序对单音有效、对宽带无论如何都救不回来。矩阵改成 `cos((2m+1)(k−16)π/64)` 之后，
+奇数子带的方向由滤波器组出口的 `(−1)^n` 决定（`AnalysisFilterbank::step`），
+`odd_band_value` 已删除，这个脚本也随之删除（历史见 git）。
 
 ## 11. 解析 MP3 帧
 
@@ -209,12 +213,13 @@ python tools/verify.py structure
 python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.wav
 python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --json
 python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --trim 1152
+python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --delay 1057
 ```
 
 工作方式：
 
 1. 读取参考和候选文件；
-2. 用 FFT 互相关搜索 ±`--max-delay` 范围内的整数延迟；
+2. 用 FFT 互相关搜索 ±`--max-delay` 范围内的整数延迟（给了 `--delay` 就直接用它）；
 3. 按最佳延迟对齐；
 4. 逐声道计算 SNR、RMS、最大误差和相关系数；
 5. 输出功率加权的整体 SNR。
@@ -222,6 +227,9 @@ python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --trim 1152
 注意：
 
 - 正延迟表示候选信号比参考信号晚。MP3 编解码器有固定延迟，未对齐的逐样本 SNR 没有意义。
+- **测本编码器的流一律给 `--delay 1057`**：这是本仓库自己测出来的常数（滤波器组 481 +
+  半块重叠 576）。周期性探针（单音）的自相关旁瓣和主峰一样高，互相关搜索会锁到邻近周期，
+  把对齐误差当成编码噪声——440 Hz 上同一个流，相关搜索报 16.2 dB，固定延迟报 22.1 dB。
 - 默认 `trim=0`。如果解码器首尾瞬态明显，可用 `--trim` 明确排除边缘样本，并在报告中写明。
 - SNR 不是感知音质指标。阶段 2 的门槛是工程判据，不替代主观试听。
 - 报告时应同时给出参考文件、解码器、延迟和 trim，不能只报一个数字。

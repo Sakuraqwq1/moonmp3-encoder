@@ -1,7 +1,74 @@
 # 交接：moonmp3-encoder（2026-11-02 夜，已解决版）
 
 > **重大更新：分析层的正确形式已经拿到并交叉验证通过。** 不再需要两侧反卷积。
-> 新会话的第一件事就是按 §5' 移植，约 20 行改动。
+> **移植已经做完**（§0''），整条链在无量化时是解码器的逆（白噪声 84.44 dB），
+> 全频段端到端 SNR 21.8–25.8 dB（最差 21.83 @ 4000 Hz），685 Hz 从 −2.08 回到 23.04。
+
+## 0''. 移植结果（2026-11-02 深夜，本条最新）
+
+### 实际改了什么
+
+§5' 的三条都做了，但**多出第四条，而它是必须的**（§5' 里没有）：
+
+| # | 改动 | 位置 |
+| --- | --- | --- |
+| 1 | 矩阵 `cos((16+j)(2m+1)π/64)` → `cos((2m+1)(j−16)π/64)` | `analysis.mbt` `matrix_element` |
+| 2 | 删 `odd_band_value`，改在**滤波器组出口**对奇数子带的奇数步乘 `(−1)^n` | `AnalysisFilterbank::step`（新增 `mut step` 计数） |
+| 3 | 分析窗 `C = D/32`（`AnalysisWindowScale = 0.03125`），`SynthesisGain` 288 → **9** | `analysis.mbt` |
+| 4 | **新增 `antialias_compensation`：编码器侧做解码器 antialias 的转置** | `ChannelAnalysis::granule` 末尾 |
+
+### 为什么必须有第 4 条
+
+§0' 的 84.33 dB 是在**子带层**测的（`cross_spec.py` 把子带输出直接接进 synthesis，跳过
+`antialias → IMDCT → overlap-add`）。把这套分析接进**完整**解码器链（`decode_granules`，
+即 `--score` 的路径）时，带边界的频线会被解码器规范性的 Givens 旋转打乱：
+
+```text
+白噪声，完整解码器链，无量化
+  没有 antialias 预补偿 :  11.55 dB      <- 84 dB 的分析，接真解码器只剩 11 dB
+  有   antialias 预补偿 :  84.47 dB      <- delay 1057, gain 1.00000
+```
+
+这正是"矩阵对了但带边界还是塌"的那个残影，也是为什么**只有 `cross_spec.py` 不够**：
+它测的子带层没有 `antialias`。antialias 是解码器规范的一部分，每个解码器都会做，所以
+encoder 必须写它的逆（八对 Givens 是正交的，逆 = 转置）。这条改动把"分析层的逆"从
+"子带域成立"变成"整条链成立"。
+
+### 延迟是 1057，不是 481
+
+滤波器组 481 + 半块重叠 576：一个 granule 的 MDCT 块是 `[上一个 granule, 本 granule]`，
+所以解码器的 overlap-add 输出的是**上一个 granule** 的子带样本。整链延迟 1057，拟合增益
+1.00000，全部频点一致。
+
+**测量陷阱**：`snr.py` 的整信号互相关在周期性探针上找不到这个常数（单音自相关的旁瓣和主峰
+一样高），440 Hz 会报 16.2 dB，而按 1057 对齐是 22.1 dB——同一条流。所以 `snr.py` 加了
+`--delay`，`selftest` 与 `sweep_snr.py` 都改用固定延迟。
+
+### 门禁现状（全部复现过）
+
+```text
+moon fmt --check / check --deny-warn / test --deny-warn (29) / info   ok
+python tools/analysis_ref.py --self                                  ok
+python tools/analysis_ref.py --compare                               2.0e-16 相对误差
+python tools/decoder_ref.py --verify                                 127.5 dB（未动）
+python tools/cross_spec.py                                           84.33 / 1.18，gate ok
+python tools/decoder_ref.py --score --noise                           84.44 dB（旧分析 1.02）
+  685 Hz 96.66   440 Hz 96.86   1390 Hz 97.06   8000 Hz 97.85
+python tools/sweep_snr.py                                            最差 21.83 dB，全段 ≥20
+python tools/selftest.py                                             32 ok
+python tools/verify.py structure                                     12 ok
+python tools/check_release.py  /  python tools/selftest.py checks     ok
+```
+
+频点落点（`docs/line-frequencies.md` 已更新）：440/900/1000/1100/2000/3000/5000/8000 Hz
+的解码主频偏差全在 **0.12 Hz** 以内（修复前 8000 Hz 会解成 7847.66 Hz）。
+
+### 剩下的是什么
+
+端到端 21.8–25.8 dB 已经不是分析层的天花板：无量化闭环是 96 dB。现在的限制是**量化器
+本身**——`global_gain` 一个 granule 一个、系数上限 15（MPEG-1 无 linbits）、没有
+scalefactor。峰线只能落到 15 级网格里，系统增益误差约 3.8 %（实测拟合增益 1.03–1.04），
+这就是 stage 2 的 scalefactor band 该做的事。
 
 ## 0'. 已验证的解法（本条最重要）
 
@@ -24,6 +91,9 @@ matrix=spec  inversion=False:   1.18 dB   (缺 (−1)^n 翻转)
 | 延迟 481 样本；`C = D/32`（峰值 0.035780907 = 1.144989014/32） | 与实测 delay/gain 完全一致 |
 
 ## 5'. 移植清单（约 20 行，`src/mp3/analysis.mbt`）
+
+> 这一节是**事前的计划**，已经按 §0'' 落地；实际改动多了 `antialias_compensation`，
+> 窗口与增益的常数是 `0.03125` 和 `9.0`。保留原文只为对照。
 
 他的折叠和仓库现用的**一样**（`Y[k] = Σ_{j=0..7} Z[k+64j]`，即按列求和），所以只改三处：
 
