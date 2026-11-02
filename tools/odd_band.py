@@ -32,7 +32,7 @@ import snr
 from mp3lab import ROOT, ToolError, decode_mp3, extract_payload, run_cli
 
 ANALYSIS = os.path.join(ROOT, "src", "mp3", "analysis.mbt")
-MARKER_START = "fn odd_band_value(spectrum : Array[Double], subband : Int32, line : Int32) -> Double {"
+MARKER_START = "fn odd_band_value("
 MARKER_END = "\n}\n"
 
 CANDIDATES = {
@@ -52,6 +52,13 @@ CANDIDATES = {
         "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
         "  if line == 0 {\n    return 0.0\n  }\n  spectrum[18 - line]"
     ),
+    "reverse_edges_intact": (
+        "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
+        "  if line < 2 || line > 15 {\n    return spectrum[line]\n  }\n  spectrum[17 - line]"
+    ),
+    "reverse_negated": (
+        "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n  -spectrum[17 - line]"
+    ),
     "reverse18_alt": (
         "  if subband % 2 == 0 {\n    return spectrum[line]\n  }\n"
         "  if line == 0 {\n    return 0.0\n  }\n"
@@ -63,7 +70,8 @@ CANDIDATES = {
 
 def _body_bounds(text: str) -> tuple[int, int]:
     """Span of the function body: after the opening brace, before its match."""
-    start = text.index(MARKER_START) + len(MARKER_START)
+    anchor = text.index(MARKER_START) + len(MARKER_START)
+    start = text.index("{", anchor) + 1
     depth = 1
     index = start
     while index < len(text):
@@ -136,7 +144,7 @@ def main() -> int:
         for name, body in (CANDIDATES.items() if not args.report else [("checked-in", original)]):
             if not args.report:
                 install(body)
-            rows = [score(freq) for freq in (1000, 8000, 440)]
+            rows = [score(freq) for freq in (440, 685, 1000, 1390)]
             mean = round(sum(row["snr_db"] for row in rows) / len(rows), 2)
             worst = min(row["snr_db"] for row in rows)
             results.append((name, mean, worst, rows))
