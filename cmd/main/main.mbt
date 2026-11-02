@@ -22,6 +22,8 @@ fn main {
     run_encode(args)
   } else if command == "lines" {
     run_lines(args)
+  } else if command == "alloc" {
+    run_alloc(args)
   } else if command == "version" {
     println(@encoder.version())
   } else {
@@ -35,6 +37,9 @@ fn main {
       "  encode     encode interleaved int16 PCM given as base64 (pcm channels)",
     )
     println("  lines      debug: dump one granule's 576 analysis lines")
+    println(
+      "  alloc      debug: cost and error of every candidate gain (freq amp_pct granule)",
+    )
     println(
       "  tone       debug: fixed count1 spectrum (frames lines gain channels)",
     )
@@ -329,5 +334,75 @@ fn parse_count(args : Array[String], index : Int32, fallback : Int32) -> Int32 {
   }
   @string.parse_int(args[index]) catch {
     (_ : Error) => fallback
+  }
+}
+
+///|
+/// Debug: how the granule allocator sees one granule.
+///
+/// Prints the exact Huffman cost and the reconstruction error of every candidate
+/// gain around the one that maps the peak onto the top level, plus the bit budget
+/// the frame gives each granule. "Why did it pick that gain?" should be a table,
+/// not a guess: the two ways it can move are the budget and the error metric, and
+/// this prints both. `alloc <freq> <amp_pct> <granule>`.
+fn run_alloc(args : Array[String]) -> Unit {
+  let freq = parse_count(args, 2, 440)
+  let amplitude = parse_count(args, 3, 50)
+  let target = parse_count(args, 4, 5)
+  if target < 0 {
+    println("ERROR: granule must be non-negative")
+    return
+  }
+  let frames = target / 2 + 1
+  let samples = sine_samples(
+    [freq],
+    amplitude.to_double() / 100.0,
+    1,
+    frames * 1152,
+  )
+  let analyser = @mp3.ChannelAnalysis::new()
+  let pcm = Array::make(576, 0.0)
+  let mut lines : Array[Double] = []
+  for granule = 0; granule <= target; granule = granule + 1 {
+    for index = 0; index < 576; index = index + 1 {
+      pcm[index] = samples[granule * 576 + index].to_double() / 32768.0
+    }
+    lines = analyser.granule(pcm) catch {
+      (_ : @mp3.AnalysisError) => {
+        println("ERROR: analysis failed")
+        return
+      }
+    }
+  }
+  let peak = @mp3.peak_absolute(lines)
+  let centre = @mp3.global_gain_for_peak(peak, @mp3.MaxQuantLevel)
+  // Monophonic 128 kbps frame: the same share encode() hands to one granule.
+  let budget = (418 * 8 - 32 - 136) / 2
+  let mut energy = 0.0
+  for value in lines {
+    energy = energy + value * value
+  }
+  let quantiser = @mp3.GranuleQuantiser::new(lines)
+  println(
+    "granule=\{target} freq=\{freq} amplitude=\{amplitude} peak=\{peak} centre=\{centre} budget=\{budget} energy=\{energy}",
+  )
+  for offset = -2; offset <= 8; offset = offset + 1 {
+    let gain = centre + offset
+    if gain < 0 || gain > 255 {
+      continue
+    }
+    let values = quantiser.quantise(gain)
+    let big = @mp3.big_values_needed(values)
+    let table = @mp3.choose_table(values, big)
+    let cost = @mp3.granule_cost(values, table, big)
+    let error = quantiser.error(values, gain)
+    let snr = if error > 0.0 {
+      10.0 * @math.log10(energy / error)
+    } else {
+      999.0
+    }
+    println(
+      "  gain=\{gain} cost=\{cost} big=\{big} table=\{table} nonzero=\{@mp3.count1_nonzero(values)} error=\{error} snr=\{snr}",
+    )
   }
 }

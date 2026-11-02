@@ -139,7 +139,15 @@ pub fn GranuleQuantiser::quantise(
 
 ///|
 /// Squared reconstruction error of `values`: the sum over the lines of
-/// `(is^(4/3) * 2^((gain-210)/4) - xr)^2`.
+/// `(sign(is) |is|^(4/3) 2^((gain-210)/4) - xr)^2`.
+///
+/// The sign matters twice: the decoder requantises `sign(is) * |is|^(4/3) * ...`,
+/// so a coefficient's reconstruction is only comparable with the line it came
+/// from once the sign is back on it. Without that, a granule whose coefficients
+/// alternate sign scores an error larger than its own energy at *every* gain, and
+/// the search that minimises this number picks essentially arbitrary gains — the
+/// 2026-11-02 build wrote gains up to 7 steps coarser than the peak-matching one
+/// for a steady tone and lost about 3.5 dB of end-to-end SNR to it.
 pub fn GranuleQuantiser::error(
   self : GranuleQuantiser,
   values : Array[Int32],
@@ -149,7 +157,8 @@ pub fn GranuleQuantiser::error(
   let mut total = 0.0
   for index = 0; index < values.length(); index = index + 1 {
     let level = values[index].abs()
-    let reconstructed = dequant_levels[level] * amplitude
+    let magnitude = dequant_levels[level] * amplitude
+    let reconstructed = if values[index] < 0 { -magnitude } else { magnitude }
     let difference = reconstructed - self.lines[index]
     total = total + difference * difference
   }

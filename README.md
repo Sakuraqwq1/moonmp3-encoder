@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
-> 状态：**阶段 1 收尾中（分析层已修正，量化待升级）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪。分析层现在是**已验证解码器链的逆**：无量化闭环白噪声 84.44 dB、685 Hz 96.66 dB，全频段端到端 SNR **21.8–25.8 dB**（最差 21.83 @ 4000 Hz），685 Hz 从 −2.08 dB 回到 23.04 dB。仍缺 scalefactor band 与逐带步长，详见 `docs/stage1-progress.md`。
+> 状态：**阶段 2 进行中（量化器已修正，scalefactor 待做）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪。分析层是**已验证解码器链的逆**（无量化闭环白噪声 84.44 dB），全频段端到端 SNR **26.8–32.3 dB**（440 Hz 27.9 dB），同码率对比 LAME 128 kbps 在正弦/多音/扫频/白噪声/满幅五个探针上都不差；详见 `docs/stage2-progress.md`。仍缺 scalefactor band、位保留区和短块。
 
 ## 为什么需要它
 
@@ -31,7 +31,7 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
-> 当前是阶段 1 的中间状态：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 21.8–25.8 dB，带边缘不再塌陷；但还没有 scalefactor band，量化是一个 granule 一个 `global_gain`、系数上限 15，满幅输入有轻微削波。要用于真实音频导出，请等 scalefactor 与码率控制落地。
+> 当前是阶段 2 的中间状态：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 26.8–32.3 dB，同码率下五个探针都不低于 LAME；但还没有 scalefactor band、位保留区和短块，白噪声这类平坦信号只有 12.7 dB，满幅输入解码峰值 1.12（过冲）。要用于真实音乐导出，请等 scalefactor 与短块落地。
 
 ## 验证方式
 
@@ -48,6 +48,7 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 - `tools/crossdecode.py` 用 mpg123 与 ffmpeg 两个独立解码器解同一条流并比对（当前相关度 1.000000）。
 - `tools/sweep_snr.py` 扫全频段 SNR，专治"抽查几个整数频率都正常"的错觉。
 - `tools/snr.py` 测量逐声道和整体 SNR，可按已知延迟（本编码器 1057）对齐。
+- `moon run cmd/main -- alloc 440 50 5` 打印某个 granule 每个候选增益的精确 Huffman 代价与重建误差，用来判断分配器为什么选了这个增益。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
 - `tools/selftest.py` 验证上述工具本身没有回归。
 - `tools/doctor.py` 检查 MoonBit、libsndfile、MP3 解码后端和素材是否就绪。

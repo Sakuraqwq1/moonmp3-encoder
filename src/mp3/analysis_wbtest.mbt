@@ -222,6 +222,31 @@ test "quantiser : the peak lands on the top level available" {
 }
 
 ///|
+test "quantiser : the error metric puts the sign back on the reconstruction" {
+  // A coefficient's reconstruction is `sign(is) |is|^(4/3) 2^((g-210)/4)`; an
+  // error metric that drops the sign scores a sign-alternating granule as worse
+  // than silence at every gain, and the allocator then picks gains at random.
+  // Alternating +-0.5 over 36 lines is the smallest input that catches that: the
+  // error has to come out far below the granule's own energy.
+  let lines = Array::make(576, 0.0)
+  let mut energy = 0.0
+  for index = 0; index < 36; index = index + 1 {
+    let value = if index % 2 == 0 { 0.5 } else { -0.5 }
+    lines[index] = value
+    energy = energy + value * value
+  }
+  let quantiser = GranuleQuantiser::new(lines)
+  let gain = global_gain_for_peak(peak_absolute(lines), MaxQuantLevel)
+  let values = quantiser.quantise(gain)
+  let error = quantiser.error(values, gain)
+  // With the sign restored the reconstruction is within a few percent, so the
+  // residual is a small fraction of the energy; without it the residual is 4x.
+  assert_true(error < energy * 0.01)
+  assert_true(values[0] > 0)
+  assert_true(values[1] < 0)
+}
+
+///|
 test "quantiser : raising the gain only ever shrinks coefficients" {
   let lines = Array::make(576, 0.0)
   for index = 0; index < 576; index = index + 1 {
