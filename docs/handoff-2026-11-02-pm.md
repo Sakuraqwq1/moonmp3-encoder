@@ -1,7 +1,7 @@
 # 交接文档（2026-11-02 下午）
 
 > 给接手的 agent 用。读完这一份就能知道：现在在哪、什么已验证、下一步做什么、哪里不能碰。
-> **本文件取代 `docs/handoff-2026-11-02.md`（当天上午的快照）**；通用的任务书和判据在 `docs/stage1-handoff.md`。
+> **已被 docs/handoff-2026-11-02-night.md 取代**（晚间快照，压缩了整轮上下文，含唯一待办与判据）。本文件保留作当天下午的详细记录。；通用的任务书和判据在 `docs/stage1-handoff.md`。
 > 进度详情见 `docs/stage1-progress.md`，频线映射见 `docs/line-frequencies.md`。
 
 ## 1. 一句话现状
