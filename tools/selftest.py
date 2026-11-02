@@ -262,7 +262,9 @@ class FixedSpectrumTests(unittest.TestCase):
         self.assertEqual(report["summary"]["bytes"], len(self.payload))
         self.assertTrue(report["summary"]["constant_bitrate"])
         for frame in report["frames"]:
-            self.assertEqual(frame["side_info"]["main_data_begin"], 0)
+            # Nine-bit offset: every frame must point inside the decoder's window.
+            self.assertGreaterEqual(frame["side_info"]["main_data_begin"], 0)
+            self.assertLessEqual(frame["side_info"]["main_data_begin"], 511)
             for granule in frame["side_info"]["granules"]:
                 self.assertEqual(granule["part2_3_length"], 577)
                 self.assertEqual(granule["big_values"], 0)
@@ -341,6 +343,13 @@ class AnalysisTests(unittest.TestCase):
             os.unlink(path)
         self.assertEqual(report["warnings"], [])
         for frame in report["frames"]:
+            # Main data flows through the bit reservoir: a frame points back at
+            # where its own data begins, and the nine-bit field caps that at the
+            # 511-byte window the decoder keeps.
+            self.assertGreaterEqual(frame["side_info"]["main_data_begin"], 0)
+            self.assertLessEqual(frame["side_info"]["main_data_begin"], 511)
+            capacity = (frame["header"]["size"] - 4 - frame["header"]["side_size"]) * 8
+            reachable = frame["side_info"]["main_data_begin"] * 8 + capacity
             for granule in frame["side_info"]["granules"]:
                 self.assertGreaterEqual(granule["global_gain"], 0)
                 self.assertLessEqual(granule["global_gain"], 255)
@@ -351,9 +360,12 @@ class AnalysisTests(unittest.TestCase):
                 # Every MPEG-1 table reaches at most 15 and uses no escapes.
                 for table in granule["table_select"]:
                     self.assertTrue(table in (0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15), table)
-                # At least the 576 count1 mask bits have to be paid for.
+                # At least the 576 count1 mask bits have to be paid for, and no
+                # granule may claim more than what the decoder can reach at this
+                # frame (the borrowed bytes plus this frame's area, shared by the
+                # two granules of the channel).
                 self.assertGreaterEqual(granule["part2_3_length"], 576)
-                self.assertLessEqual(granule["part2_3_length"], 1584)
+                self.assertLessEqual(granule["part2_3_length"], reachable // 2)
 
     def test_big_values_lifts_the_sine_above_twenty_db(self):
         # The stage-1 quality floor: a steady tone has to decode at its own

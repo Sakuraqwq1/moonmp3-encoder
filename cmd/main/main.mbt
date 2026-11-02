@@ -165,8 +165,28 @@ fn run_sine(args : Array[String]) -> Unit {
     }
   }
   let mp3 = @encoder.encode(samples, 44100, channels) catch {
-    (_ : @mp3.EncodeError) => {
-      println("ERROR: encode failed")
+    @mp3.AnalysisFailed(frame) => {
+      println("ERROR: analysis failed in frame \{frame}")
+      return
+    }
+    @mp3.HuffmanFailed(frame) => {
+      println("ERROR: huffman failed in frame \{frame}")
+      return
+    }
+    @mp3.EmptyInput => {
+      println("ERROR: no samples")
+      return
+    }
+    @mp3.NotInterleaved(count) => {
+      println("ERROR: \{count} samples are not a whole number of frames")
+      return
+    }
+    @mp3.UnsupportedSampleRate(rate) => {
+      println("ERROR: sample rate \{rate} is not supported")
+      return
+    }
+    @mp3.UnsupportedChannels(count) => {
+      println("ERROR: \{count} channels is not supported")
       return
     }
   }

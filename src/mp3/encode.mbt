@@ -119,6 +119,104 @@ fn plan_with_budget(lines : Array[Double], budget : Int32) -> GranulePlan {
 }
 
 ///|
+/// One frame's granule data, before it is placed into a frame area.
+priv struct FramePlan {
+  /// Frame size in bytes, padding bit already included.
+  size : Int32
+  /// Padding bit of the header.
+  padding : Int32
+  /// Bit offset in the reservoir where this frame's granule data starts.
+  start : Int32
+  granules : Array[GranuleInfo]
+}
+
+///|
+/// Analyse and plan one frame, and append its granule data to the reservoir.
+///
+/// `area_start_bits` is where this frame's main-data area will begin, which the
+/// caller knows because areas are emitted in order. The reservoir may already
+/// hold data for this frame from earlier areas; `start` records where it begins,
+/// and the caller turns `area_start - start` into `main_data_begin`.
+///
+/// The budget is every bit the decoder can reach when this frame is decoded: the
+/// unused bytes left by earlier frames (at most 511, the width of the field) plus
+/// this frame's own area. A granule that does not need its share simply spends
+/// less, which is what leaves the next frames something to borrow.
+fn plan_frame(
+  frame : Int32,
+  channels : Int32,
+  per_channel : Int32,
+  samples : Array[Int32],
+  analysis : Array[ChannelAnalysis],
+  pcm : Array[Double],
+  sizer : FrameSizer,
+  reservoir : MainDataReservoir,
+  area_start_bits : Int32,
+) -> FramePlan raise EncodeError {
+  let size = sizer.next_frame_size()
+  let padding = sizer.padding_of(size)
+  let side_bits = if channels == 1 { 136 } else { 256 }
+  let capacity = size * 8 - 32 - side_bits
+  // The stream has to start this frame's data on a byte boundary, because
+  // `main_data_begin` counts whole bytes.
+  let aligned = reservoir.align()
+  let mut lag = area_start_bits / 8 - aligned / 8
+  if lag > 511 {
+    // The field cannot reach further back than the decoder's buffer; drop the
+    // excess as unused space rather than write an out-of-range offset.
+    reservoir.pad((lag - 511) * 8)
+    lag = 511
+  }
+  if lag < 0 {
+    raise AnalysisFailed(frame)
+  }
+  // After padding, the frame's data starts where the stream now ends.
+  let start = reservoir.length
+  let budget = (lag + capacity / 8) * 8
+  let share = budget / (2 * channels)
+  let granules : Array[GranuleInfo] = []
+  let w = @bits.BitWriter::new()
+  let mut bits = 0
+  for granule = 0; granule < 2; granule = granule + 1 {
+    for channel = 0; channel < channels; channel = channel + 1 {
+      let offset = frame * FrameSamples + granule * GranulePcm
+      for index = 0; index < GranulePcm; index = index + 1 {
+        let absolute = offset + index
+        pcm[index] = if absolute < per_channel {
+          samples[absolute * channels + channel].to_double() / 32768.0
+        } else {
+          0.0
+        }
+      }
+      let lines = analysis[channel].granule(pcm) catch {
+        (_ : AnalysisError) => raise AnalysisFailed(frame)
+      }
+      let plan = plan_with_budget(lines, share)
+      if plan.cost > share {
+        raise HuffmanFailed(frame)
+      }
+      granules.push(
+        GranuleInfo::big_values(
+          plan.cost,
+          plan.big_values,
+          plan.gain,
+          plan.table,
+        ),
+      )
+      let written = write_granule(w, plan.values, plan.table, plan.big_values) catch {
+        (_ : HuffmanError) => raise HuffmanFailed(frame)
+      }
+      if written != plan.cost {
+        raise HuffmanFailed(frame)
+      }
+      bits = bits + plan.cost
+    }
+  }
+  reservoir.append(w.finish(), bits)
+  FramePlan::{ size, padding, start, granules, }
+}
+
+///|
 /// Encode interleaved signed 16-bit PCM as an MPEG-1 Layer III stream.
 ///
 /// Each granule is analysed with the 32-band polyphase filterbank and the
@@ -126,10 +224,12 @@ fn plan_with_budget(lines : Array[Double], budget : Int32) -> GranulePlan {
 /// and written as a big_values region plus a count1 tail. No scalefactors are
 /// transmitted yet: one `global_gain` sets the scale for the whole granule.
 ///
-/// This is the stage where the encoder stops approximating every line with a
-/// single bit. A steady tone now decodes with a recognisable amplitude envelope
-/// and a signal-to-noise ratio in the low twenties, which is what stage 1 of
-/// `docs/stage1-handoff.md` asks for; per-band scalefactors are the next step.
+/// Main data is one continuous bit stream cut into the frames' areas, so the whole
+/// stream has to exist before any area is written: a frame's data may begin up to
+/// 511 bytes before that frame's area, i.e. inside areas that are emitted earlier.
+/// Hence two passes — analyse and plan every frame into the reservoir, then lay the
+/// areas out. The input is already in memory, so the buffering costs no more than
+/// the sample array does.
 pub fn encode(
   samples : Array[Int32],
   sample_rate : Int32,
@@ -150,7 +250,6 @@ pub fn encode(
   let per_channel = samples.length() / channels
   let nframes = (per_channel + FrameSamples - 1) / FrameSamples
   let mode = if channels == 1 { ModeMono } else { ModeStereo }
-  let side_bits = if channels == 1 { 136 } else { 256 }
   let sizer = FrameSizer::new(Bitrate128kbps, sample_rate)
   let analysis : Array[ChannelAnalysis] = []
   for channel = 0; channel < channels; channel = channel + 1 {
@@ -158,61 +257,33 @@ pub fn encode(
   }
   let pcm = Array::make(GranulePcm, 0.0)
   let out = @buffer.Buffer::Buffer(size_hint=8192)
+  let reservoir = MainDataReservoir::new()
+  // Pass one: analyse, quantise and append, which fixes where every frame's data
+  // lands in the stream.
+  let plans : Array[FramePlan] = []
+  let side_bits = if channels == 1 { 136 } else { 256 }
+  let mut area_start = 0
   for frame = 0; frame < nframes; frame = frame + 1 {
-    let size = sizer.next_frame_size()
-    let padding = sizer.padding_of(size)
-    // Equal share of main data per granule. A granule that cannot fit its share
-    // is coarsened rather than allowed to overrun the frame.
-    let share = (size * 8 - 32 - side_bits) / (2 * channels)
-    let plans : Array[GranulePlan] = []
-    let granules : Array[GranuleInfo] = []
-    for granule = 0; granule < 2; granule = granule + 1 {
-      for channel = 0; channel < channels; channel = channel + 1 {
-        let start = frame * FrameSamples + granule * GranulePcm
-        for index = 0; index < GranulePcm; index = index + 1 {
-          let absolute = start + index
-          pcm[index] = if absolute < per_channel {
-            samples[absolute * channels + channel].to_double() / 32768.0
-          } else {
-            0.0
-          }
-        }
-        let lines = analysis[channel].granule(pcm) catch {
-          (_ : AnalysisError) => raise AnalysisFailed(frame)
-        }
-        let plan = plan_with_budget(lines, share)
-        if plan.cost > share {
-          raise HuffmanFailed(frame)
-        }
-        plans.push(plan)
-        granules.push(
-          GranuleInfo::big_values(
-            plan.cost,
-            plan.big_values,
-            plan.gain,
-            plan.table,
-          ),
-        )
-      }
-    }
-    let w = @bits.BitWriter::new()
-    write_header(w, BitrateIndex128, SampleRateIndex44100, mode, padding)
-    let scfsi = Array::make(channels, 0)
-    write_side_info(w, channels, 0, scfsi, granules)
-    for index = 0; index < plans.length(); index = index + 1 {
-      let plan = plans[index]
-      let written = write_granule(w, plan.values, plan.table, plan.big_values) catch {
-        (_ : HuffmanError) => raise HuffmanFailed(frame)
-      }
-      if written != plan.cost {
-        raise HuffmanFailed(frame)
-      }
-    }
-    let stuffed = size * 8 - w.bit_length()
-    if stuffed < 0 {
+    let plan = plan_frame(
+      frame, channels, per_channel, samples, analysis, pcm, sizer, reservoir, area_start,
+    )
+    area_start = area_start + plan.size * 8 - 32 - side_bits
+    plans.push(plan)
+  }
+  // Pass two: cut the stream into the areas, which follow one another at the
+  // frame sizes the CBR sizer picked.
+  for frame = 0; frame < nframes; frame = frame + 1 {
+    let plan = plans[frame]
+    let main_data_begin = reservoir.placed() / 8 - plan.start / 8
+    if main_data_begin < 0 || main_data_begin > 511 {
       raise AnalysisFailed(frame)
     }
-    w.write_bits(0L, stuffed)
+    let w = @bits.BitWriter::new()
+    write_header(w, BitrateIndex128, SampleRateIndex44100, mode, plan.padding)
+    let scfsi = Array::make(channels, 0)
+    write_side_info(w, channels, main_data_begin, scfsi, plan.granules)
+    let capacity = plan.size * 8 - 32 - side_bits
+    reservoir.take(w, capacity)
     let bytes = w.finish()
     for index = 0; index < bytes.length(); index = index + 1 {
       out.write_byte(bytes[index])

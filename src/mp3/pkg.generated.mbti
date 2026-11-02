@@ -181,6 +181,22 @@ pub fn GranuleQuantiser::error(Self, Array[Int32], Int32) -> Double
 pub fn GranuleQuantiser::new(Array[Double]) -> Self
 pub fn GranuleQuantiser::quantise(Self, Int32) -> Array[Int32]
 
+pub struct MainDataReservoir {
+  bytes : Array[Byte]
+  mut length : Int32
+  mut placed : Int32
+}
+pub fn MainDataReservoir::align(Self) -> Int32
+pub fn MainDataReservoir::append(Self, Bytes, Int32) -> Unit
+pub fn MainDataReservoir::bit(Self, Int32) -> Int32
+pub fn MainDataReservoir::byte_at(Self, Int32) -> Int32
+pub fn MainDataReservoir::new() -> Self
+pub fn MainDataReservoir::pad(Self, Int32) -> Unit
+pub fn MainDataReservoir::pending(Self) -> Int32
+pub fn MainDataReservoir::placed(Self) -> Int32
+pub fn MainDataReservoir::push(Self, Int32) -> Unit
+pub fn MainDataReservoir::take(Self, @bits.BitWriter, Int32) -> Unit
+
 // Type aliases
 
 // Traits

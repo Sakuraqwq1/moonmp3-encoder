@@ -40,7 +40,8 @@
 - [x] 单/双声道、`1152±1`、静音、满幅、瞬态、长音频矩阵通过。
       （`tools/selftest.py` 32 例；满幅解码峰值 1.12 有过冲，不崩但待处理）
 - [x] 至少两个独立解码器结果一致（延迟对齐后比较长度和波形）。`tools/crossdecode.py`：相关度 1.000000
-- [ ] reservoir 连续多帧不越界，长序列不产生爆音。**（未做，`main_data_begin` 仍是常数 0）**
+- [x] reservoir 连续多帧不越界，长序列不产生爆音。
+      （39 帧实测 `main_data_begin` = 0/232/477/511…，全在 0..511；mpg123 与 ffmpeg 相关度 1.000000、差 125.7 dB；见 `docs/stage2-progress.md`）
 - [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 30 例）
 - [x] 对比同码率 LAME 的体积和 SNR，差距如实写入 README。
       （PyAV `libmp3lame` 128 kbps mono，五个探针：27.6/26.1/26.8/12.7/27.4 dB vs 26.0/26.0/26.0/8.5/26.0 dB）
