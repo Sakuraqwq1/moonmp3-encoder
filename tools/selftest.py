@@ -425,6 +425,14 @@ class BoundaryMatrixTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(data)))
         self.assertGreater(float(np.max(np.abs(data))), 0.01)
 
+    def test_decoder_model_reproduces_libsndfile(self):
+        # tools/decoder_ref.py models the decoder chain stage by stage. If it ever
+        # stops matching the real decoder, every closed-loop measurement built on
+        # it becomes meaningless, so the model itself is gated here.
+        import decoder_ref
+
+        agreement = decoder_ref.verify()
+        self.assertGreaterEqual(agreement, 40.0, agreement)
     def test_two_decoders_agree(self):
         import crossdecode
 

@@ -126,7 +126,32 @@ python tools/crossdecode.py target/sine440.mp3 --json
 和主频。两个解码器共享零代码，所以"一致"是对流本身的证据，不是某一个库的宽容度。
 `requirements-dev.txt` 里的 `av` 就是这个作用；它只是开发期 oracle，不进 MoonBit 包。
 
-## 8. Huffman 表来源校验
+## 8. 解码器模型与闭合环
+
+```bash
+python tools/decoder_ref.py --verify          # 与 libsndfile 对齐（当前 127.5 dB）
+python tools/decoder_ref.py --score           # 用闭环给分析层打分
+python tools/decoder_ref.py --score --freq 685
+```
+
+`decoder_ref.py` 逐步复现参考解码器：`antialias`（作用在量化后的频线上，八对 Givens 系数）
+→ IMDCT + overlap-add（频线 → 子带样本）→ `frequencyInversion`（奇数带奇数时间点取负）
+→ 余弦矩阵 + 两项 U 构造 + 512 点合成窗。用 count1 单线流与 libsndfile 比对，
+吻合 **127.5 dB**（int16 打印上限），所以这个模型**就是**解码器。
+
+`--score` 把候选分析层接上这个解码器、**中间不做任何量化**，测闭环 SNR。这解决了一个
+一直缺的东西：判断"折叠对不对"不再靠肉眼或端到端 SNR 猜。当前检入的分析层得分：
+
+```text
+440 Hz  35.09 dB     685 Hz   0.07 dB   <- 带边缘
+1000 Hz 46.74 dB     1390 Hz  0.68 dB   <- 带边缘
+3000 Hz 32.86 dB     8000 Hz 40.18 dB
+```
+
+带边缘在**无量化**的闭环里就塌了，所以它是结构性缺陷，跟位预算、量化器无关。
+任何替换方案必须在每个频率都拿到 ~35 dB，包括 689 Hz 边界两侧。
+
+## 9. Huffman 表来源校验
 
 ```bash
 python tools/huffman_tables.py --report   # 校验并汇总 15 张 big_values 表
@@ -138,7 +163,7 @@ python tools/huffman_tables.py --fetch    # 重新拉取上游（需要网络）
 编码侧 `(x,y) -> (码长, 码字)`，并在写出前校验 Kraft 和、码字冲突与表尺寸；展开结果
 的 SHA-256 与实测的每张表 extent/最大码长都记录在 `docs/provenance.md`。
 
-## 9. 奇数子带映射实测
+## 10. 奇数子带映射实测
 
 ```bash
 python tools/odd_band.py            # 逐个候选映射实测 SNR，报告最优
@@ -151,7 +176,7 @@ python tools/odd_band.py --report   # 只测当前检入的那一版
 `odd_band_value`、重编、解码、打分，结束后恢复原样。当前最优：**纯倒序**（+16 dB，
 而"倒序 + 交替变号"是 −1.7 dB）。
 
-## 10. 解析 MP3 帧
+## 11. 解析 MP3 帧
 
 ```bash
 python tools/mp3dump.py target/ours-silent.mp3 --first 2 --verbose
@@ -168,7 +193,7 @@ python tools/mp3dump.py target/ours-silent.mp3 --strict
 
 阶段 1 调试时，优先让 `--strict` 零 warning，再判断声音是否正确。
 
-## 11. 结构验证
+## 12. 结构验证
 
 ```bash
 python tools/verify.py structure
@@ -178,7 +203,7 @@ python tools/verify.py structure
 
 阶段 1 增加真实音频后，保留这个命令作为回归门禁；新增音频用例另加命令，不要削弱现有检查。
 
-## 12. SNR 测量
+## 13. SNR 测量
 
 ```bash
 python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.wav
@@ -201,7 +226,7 @@ python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --trim 1152
 - SNR 不是感知音质指标。阶段 2 的门槛是工程判据，不替代主观试听。
 - 报告时应同时给出参考文件、解码器、延迟和 trim，不能只报一个数字。
 
-## 13. 频谱检查
+## 14. 频谱检查
 
 ```bash
 python tools/spectrum.py target/fixtures/sine440_mono_1s.wav
@@ -218,7 +243,7 @@ python tools/spectrum.py decoded.mp3 --json
 
 4096 点 FFT 的频率分辨率约 10.8 Hz，插值后正弦峰值误差通常在 ±1 Hz 内。频谱不是音质评分，仍以 SNR 和试听为补充。
 
-## 14. 工具自测
+## 15. 工具自测
 
 ```bash
 python tools/selftest.py
@@ -238,7 +263,7 @@ python tools/selftest.py
 
 工具改动后必须先跑这个命令，再动编码器。
 
-## 15. 发布前检查
+## 16. 发布前检查
 
 ```bash
 python tools/check_release.py
@@ -256,7 +281,7 @@ python tools/check_release.py --json
 
 它不替代构建和测试，只负责抓住“版本号漏改一处”这类发布事故。
 
-## 16. 一次完整的本地检查
+## 17. 一次完整的本地检查
 
 ```bash
 moon fmt --check
