@@ -14,12 +14,17 @@ fn main {
     run_selftest()
   } else if command == "silent" {
     run_silent(args)
+  } else if command == "tone" {
+    run_tone(args)
   } else if command == "version" {
     println(@encoder.version())
   } else {
     println("unknown command")
     println("  selftest   emit one second of silence, print the MP3 as base64")
     println("  silent     emit n samples of silence, print the MP3 as base64")
+    println(
+      "  tone       debug: fixed count1 spectrum (frames line gain channels)",
+    )
     println("  version    print the module version")
   }
 }
@@ -62,6 +67,34 @@ fn run_silent(args : Array[String]) -> Unit {
     }
   }
   println("rate=44100 channels=\{channels} samples=\{count}")
+  println("bytes=\{mp3.length()}")
+  println("MP3BEGIN")
+  println(@base64.encode(mp3[:]))
+}
+
+///|
+/// Emit a fixed-spectrum count1 stream for bitstream debugging. This is not
+/// the PCM encoder; it exists so the main-data path can be tested on its own.
+fn run_tone(args : Array[String]) -> Unit {
+  let frames = parse_count(args, 2, 4)
+  let line = parse_count(args, 3, 12)
+  let gain = parse_count(args, 4, 210)
+  let channels = parse_count(args, 5, 1)
+  if line < 0 || line >= 576 {
+    println("ERROR: line must be in 0..575")
+    return
+  }
+  let spectrum = Array::make(576, 0)
+  spectrum[line] = 1
+  let mp3 = @mp3.encode_count1_spectrum(frames, channels, spectrum, gain) catch {
+    (_ : @mp3.Count1Error) => {
+      println("ERROR: tone encode failed")
+      return
+    }
+  }
+  println(
+    "rate=44100 channels=\{channels} samples=\{frames * 1152} line=\{line} gain=\{gain}",
+  )
   println("bytes=\{mp3.length()}")
   println("MP3BEGIN")
   println(@base64.encode(mp3[:]))

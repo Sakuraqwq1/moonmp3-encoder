@@ -22,13 +22,28 @@ pub const SampleRate44100 : Int32 = 44100
 
 pub const SampleRateIndex44100 : Int32 = 0
 
+pub fn count1_bits(Array[Int32]) -> Int32 raise Count1Error
+
 pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise EncodeError
+
+pub fn encode_count1_spectrum(Int32, Int32, Array[Int32], Int32) -> Bytes raise Count1Error
+
+pub fn write_count1(@bits.BitWriter, Array[Int32]) -> Int32 raise Count1Error
 
 pub fn write_header(@bits.BitWriter, Int32, Int32, Int32, Int32) -> Unit
 
 pub fn write_side_info(@bits.BitWriter, Int32, Int32, Array[Int32], Array[GranuleInfo]) -> Unit
 
 // Errors
+pub suberror Count1Error {
+  BadLength(Int32)
+  BadValue(Int32)
+  BadChannels(Int32)
+  BadFrames(Int32)
+  BadGain(Int32)
+  FrameOverflow(Int32)
+}
+
 pub suberror EncodeError {
   UnsupportedSampleRate(Int32)
   UnsupportedChannels(Int32)
@@ -68,6 +83,7 @@ pub(all) struct GranuleInfo {
   scalefac_scale : Int32
   count1table_select : Int32
 }
+pub fn GranuleInfo::count1(Int32, Int32) -> Self
 pub fn GranuleInfo::silent() -> Self
 
 // Type aliases

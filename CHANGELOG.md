@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- 位流：新增 count1 Huffman 表 B 写入器与固定频谱调试编码器；`tone`
+  CLI 可生成 `big_values=0`、无 scalefactor、`main_data_begin=0` 的可解码
+  单频流，用于第一条位流竖切
 - 工具：确定性测试素材生成器（WAV + 裸 PCM + SHA-256 manifest）、SNR 测量
   （自动解码延迟对齐）、频谱峰值检查、`mp3dump` JSON / 严格模式、环境自检、
   发布预检、Python 工具链自测

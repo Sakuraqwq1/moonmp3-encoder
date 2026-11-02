@@ -240,6 +240,46 @@ class SpectrumTests(unittest.TestCase):
         self.assertIsNone(report["dominant_hz"])
 
 
+class FixedSpectrumTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix="moonmp3-count1-")
+        cls.payload = mp3lab.extract_payload(
+            mp3lab.run_cli("tone", "4", "12", "206", "1")
+        )
+        cls.path = os.path.join(cls.tmp.name, "line12.mp3")
+        with open(cls.path, "wb") as handle:
+            handle.write(cls.payload)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_frame_structure(self):
+        report = mp3dump.analyze(self.path)
+        self.assertEqual(report["warnings"], [])
+        self.assertEqual(report["summary"]["frames"], 4)
+        self.assertEqual(report["summary"]["bytes"], len(self.payload))
+        self.assertTrue(report["summary"]["constant_bitrate"])
+        for frame in report["frames"]:
+            self.assertEqual(frame["side_info"]["main_data_begin"], 0)
+            for granule in frame["side_info"]["granules"]:
+                self.assertEqual(granule["part2_3_length"], 577)
+                self.assertEqual(granule["big_values"], 0)
+                self.assertEqual(granule["count1table_select"], 1)
+
+    def test_decodes_to_a_fixed_tone(self):
+        data, rate = mp3lab.decode_mp3(self.payload)
+        self.assertEqual(rate, 44100)
+        self.assertEqual(data.shape, (4608, 1))
+        peak = float(abs(data).max())
+        self.assertGreater(peak, 0.3)
+        self.assertLess(peak, 0.6)
+        report = spectrum.analyze(self.path, 0, 5, 4096)
+        self.assertIsNotNone(report["dominant_hz"])
+        self.assertAlmostEqual(report["dominant_hz"], 459.375, delta=15.0)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_reports_version(self):
         output = mp3lab.run_cli("version")

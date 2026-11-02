@@ -147,3 +147,84 @@ fn rejects(samples : Array[Int32], rate : Int32, channels : Int32) -> Bool {
     (_ : EncodeError) => true
   }
 }
+
+///|
+test "count1 : zero quadruple is table-B code 1111" {
+  let w = @bits.BitWriter::new()
+  assert_eq(write_count1(w, [0, 0, 0, 0]), 4)
+  let bytes = w.finish()
+  assert_eq(bytes.length(), 1)
+  assert_eq(bytes[0].to_int(), 0xF0)
+}
+
+///|
+test "count1 : positive first coefficient emits code then sign zero" {
+  let w = @bits.BitWriter::new()
+  assert_eq(write_count1(w, [1, 0, 0, 0]), 5)
+  let bytes = w.finish()
+  assert_eq(bytes.length(), 1)
+  assert_eq(bytes[0].to_int(), 0x70)
+}
+
+///|
+test "count1 : negative first coefficient emits sign one" {
+  let w = @bits.BitWriter::new()
+  assert_eq(write_count1(w, [-1, 0, 0, 0]), 5)
+  let bytes = w.finish()
+  assert_eq(bytes.length(), 1)
+  assert_eq(bytes[0].to_int(), 0x78)
+}
+
+///|
+test "count1 : all four non-zero coefficients carry four sign bits" {
+  let w = @bits.BitWriter::new()
+  assert_eq(write_count1(w, [1, -1, 1, -1]), 8)
+  let bytes = w.finish()
+  assert_eq(bytes.length(), 1)
+  assert_eq(bytes[0].to_int(), 0x05)
+}
+
+///|
+test "count1 : rejects values outside -1/0/1 and partial quadruples" {
+  assert_eq(rejects_count1([2, 0, 0, 0]), true)
+  assert_eq(rejects_count1([0, 0, 0]), true)
+}
+
+///|
+test "count1 spectrum : side info length matches the emitted bits" {
+  let spectrum = Array::make(576, 0)
+  spectrum[12] = 1
+  let mp3 = encode_count1_spectrum(2, 1, spectrum, 210)
+  assert_eq(mp3.length(), 835)
+  // Header is four bytes. After main_data_begin/private/scfsi, part2_3_length
+  // starts at side-info bit 18: six bits in byte 6 and six more in byte 7.
+  let length = ((mp3[6].to_int() & 0x3F) << 6) | (mp3[7].to_int() >> 2)
+  assert_eq(length, 577)
+}
+
+///|
+test "count1 spectrum : stereo full-scale data cannot overflow a frame" {
+  let spectrum = Array::make(576, 1)
+  assert_eq(rejects_count1_spectrum(spectrum), true)
+}
+
+///|
+fn rejects_count1(values : Array[Int32]) -> Bool {
+  let w = @bits.BitWriter::new()
+  try {
+    let _ = write_count1(w, values)
+    false
+  } catch {
+    (_ : Count1Error) => true
+  }
+}
+
+///|
+fn rejects_count1_spectrum(spectrum : Array[Int32]) -> Bool {
+  try {
+    let _ = encode_count1_spectrum(2, 2, spectrum, 210)
+    false
+  } catch {
+    (_ : Count1Error) => true
+  }
+}

@@ -5,8 +5,9 @@
 ## 本仓库代码
 
 - 原创实现，许可证 Apache-2.0，见根目录 `LICENSE`。
-- 帧头、边信息、CBR 帧尺寸器、BitWriter 均按 ISO/IEC 11172-3 的位流定义独立实现。
+- 帧头、边信息、CBR 帧尺寸器、BitWriter、count1 表 B 写入器均按 ISO/IEC 11172-3 的位流定义独立实现。
 - 不包含任何 LAME、shine、libavcodec 或其他 LGPL 编码器的源代码。
+- count1 表 B 的核对数据来自 minimp3 `tab33`（CC0-1.0）：仓库 `lieff/minimp3`，blob `9fbd4d2cc50c06cc3e63dcafdd506dc6512b2103`，SHA-256 `57e437c5c1f0e8b243885d3929c8973b5e6c778451e0100ab4251d19915cb3ad`。只使用其公开码表数据核对，未复制代码。
 - libsndfile/mpg123 只在 Python 验证阶段作为解码 oracle 使用，不参与构建，不分发其代码。
 
 ## 规范与数据表
@@ -17,7 +18,8 @@
 | 分析窗 `C[512]` | 阶段 1 待接入 | 只依据 ISO/IEC 11172-3 公开规范；不得从 LAME/shine 复制 |
 | 长块 MDCT、窗切换 | 阶段 1 待实现 | ISO/IEC 11172-3 |
 | scalefactor band 表 | 阶段 1 待接入 | ISO/IEC 11172-3 |
-| Huffman 码表 | 尚未接入 | 计划使用 CC0-1.0 的 minimp3 表；接入时在此记录版本和文件路径 |
+| Huffman count1 表 B | 已实现 | 依据 ISO/IEC 11172-3 Table B.7；并用 minimp3（CC0-1.0）`tab33` 数据交叉核对，未复制其实现代码 |
+| Huffman big-values 表 | 尚未接入 | 计划使用 CC0-1.0 的 minimp3 表；接入时在此记录版本和文件路径 |
 | 心理声学模型 | 不在 v1 范围 | 不实现，质量判据使用固定 SNR |
 
 如果最终改用其他来源的 Huffman 表或窗系数，必须在合并前更新本文件，并保留原始许可证文本或链接。
