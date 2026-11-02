@@ -2,22 +2,26 @@
 
 ## [Unreleased]
 
-- 量化：接入 21 个长块 scalefactor band（Table B.8 44.1 kHz），
-  `scalefac_compress` 的 slen1/slen2 与位写入，以及带位预算的逐带
-  scalefactor 分配；全频段最差 SNR 由 26.79 dB 提升到 27.60 dB，440 Hz 由
-  27.89 dB 提升到 29.32 dB
-- 满幅：改为连续式 headroom 衰减规则（target=0.87），输入峰值 50–100 % 时解码峰值全部严格保持在 ≤1.00 以内（实测最大 0.9978），彻底消除 0 dBFS 素材过冲（代价是 100 % 满幅输出电平低约 1.2 dB，原始 SNR 17.9 dB，归一化后 28.92 dB 仍高于 LAME）
-- 短块与窗切换：瞬态检测、start/short/stop 窗、12 点短 MDCT、短块频线
-  reorder、36 个短 scalefactor 与切换块侧信息；孤立脉冲触发 start/short/stop
-  并把预回声压到约 −58 dB，mpg123 与 ffmpeg 双解码器相关度 1.000000
-- 位流：新增 count1 Huffman 表 B 写入器与固定频谱调试编码器；`tone`
-  CLI 可生成 `big_values=0`、无 scalefactor、`main_data_begin=0` 的可解码
-  单频流，用于第一条位流竖切
-- 工具：确定性测试素材生成器（WAV + 裸 PCM + SHA-256 manifest）、SNR 测量
-  （自动解码延迟对齐）、新增 `tools/lame_ref.py`（可复现同码率 LAME 128k 五探针基准测试）、
-  频谱峰值检查、`mp3dump` JSON / 严格模式、环境自检、发布预检、Python 工具链自测
-- CI：新增 `tools (python)` 作业，覆盖素材生成、工具自测和结构验证
-- 文档：阶段 1 交接、工具说明、验收自查、来源记录、决策记录、贡献约定
+## [0.2.0] - 2026-11-03
+
+- 音频编码真正落地：多相分析滤波器组与长块 MDCT 现在是**已验证解码器链的逆**
+  （无量化闭环白噪声 84.44 dB、685 Hz 96.66 dB），端到端全段 SNR 27.6-32.7 dB
+- 量化：接入 21 个长块 scalefactor band（Table B.8 44.1 kHz）与带位预算的逐带分配；
+  全段最差 26.79 -> 27.60 dB，440 Hz 27.89 -> 29.32 dB，解码/参考幅度比由 0.965
+  回到 0.997-1.000
+- 主数据位保留区：`main_data_begin` 跨帧复用（实测 0..511），mpg123 与 ffmpeg
+  相关度 1.000000
+- 短块与窗切换：瞬态检测、start/short/stop 窗、12 点短 MDCT、短块频线 reorder、
+  36 个短 scalefactor 与切换块侧信息；孤立脉冲把预回声压到约 -58 dB
+- 满幅：连续式 headroom（target=0.87），输入峰值 50-100 % 时解码峰值全部 <=1.00
+  （实测最大 0.9978）；代价是 100 % 满幅输出电平低约 1.2 dB，原始 SNR 17.9 dB、
+  归一化后 28.92 dB 仍高于同码率 LAME
+- 工具：新增 `tools/lame_ref.py`（可复现的同码率 LAME 128k 五探针基准）与 `alloc`
+  分配器诊断命令；`tone` 可生成无 scalefactor 的固定频谱流
+- 已知限制：短块 36 个 scalefactor 仍为全零（解码正确；逐带细化实测收益 <0.3 dB，
+  未合入）；没有心理声学模型，质量判据是固定 SNR
+- CI：`tools (python)` 作业覆盖素材生成、工具自测与结构验证
+- 文档：阶段 1/2 进度、工具说明、验收自查、来源记录同步到实测数字
 
 ## [0.1.1] - 2026-11-01
 
