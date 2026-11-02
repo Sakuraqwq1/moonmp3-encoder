@@ -1,5 +1,52 @@
-# 交接：moonmp3-encoder（2026-11-02 夜）
+# 交接：moonmp3-encoder（2026-11-02 夜，已解决版）
 
+> **重大更新：分析层的正确形式已经拿到并交叉验证通过。** 不再需要两侧反卷积。
+> 新会话的第一件事就是按 §5' 移植，约 20 行改动。
+
+## 0'. 已验证的解法（本条最重要）
+
+外部提供的 `tools/spec_filterbank.py`（`67ebfbe`）实现了规范分析滤波器组。我没有信它的自测
+（那是跟他自己的合成配），而是把它的子带输出接进**本仓库已验证的真解码器**（`decoder_ref.py`，
+与 libsndfile 吻合 127.5 dB），跑白噪声：
+
+```text
+matrix=spec  inversion=True :  84.33 dB   delay 481   gain 1.00000   <- 正确
+matrix=spec  inversion=False:   1.18 dB   (缺 (−1)^n 翻转)
+现役 analysis.mbt           :   0.01 dB
+```
+
+**84.33 dB 说明这份分析就是真解码器的逆。** 三条诊断全部成立：
+
+| 结论 | 证据 |
+| --- | --- |
+| 分析矩阵应为 `cos((2m+1)(j−16)π/64)`；仓库现用的 `cos((16+j)(2m+1)π/64)` 是**合成侧**形式 | 换矩阵后 84.33 dB |
+| 奇数子带必须做 `(−1)^n`（Nyquist 翻转），对应解码器 IMDCT 之后的 `L3_change_sign` | 去掉只有 1.18 dB |
+| 延迟 481 样本；`C = D/32`（峰值 0.035780907 = 1.144989014/32） | 与实测 delay/gain 完全一致 |
+
+## 5'. 移植清单（约 20 行，`src/mp3/analysis.mbt`）
+
+他的折叠和仓库现用的**一样**（`Y[k] = Σ_{j=0..7} Z[k+64j]`，即按列求和），所以只改三处：
+
+1. **矩阵**：`cos((16+j)(2m+1)π/64)` → **`cos((2m+1)(j−16)π/64)`**
+2. **删掉 `odd_band_value` 的线反转补丁**，改为对奇数子带的 **36 个 MDCT 输入样本乘 (−1)^n**
+   （n 为样本序号，即每个 block 内交替取负）
+3. **窗系数换成 C/32**（等价于把 `analysis_window` 整体除 32），并**重新校准
+   `SynthesisGain`**（原 288 是针对旧矩阵的标定，新矩阵下要按解码器 requantisation 单位重算）
+
+验收（顺序不能乱）：
+
+```bash
+python tools/decoder_ref.py --verify              # 必须 ≥40 dB（127.5）
+python tools/cross_spec.py                        # 交付实现的交叉验证，应显示 spec+inversion 84 dB
+python tools/decoder_ref.py --score --noise       # MoonBit 侧替换后，用 analysis_ref 对比逐线一致
+python tools/sweep_snr.py                         # 全频段应 ≥20 dB（现在 685 Hz 是 −2.08）
+python tools/selftest.py && python tools/verify.py structure
+```
+
+MoonBit 侧的一致性判据：`tools/analysis_ref.py --compare` 逐线吻合 ≤1e-12（现在 1e-16），
+然后重测 `sweep_snr.py`——**这才是那条 30% 频谱塌陷应该消失的时刻**。
+
+## 0. 30 秒速览（原状态，保留作对照）
 > 给接手的新会话用。**先读这一份**，它压缩了整轮工作的全部上下文。
 > 历史细节在 `docs/stage1-progress.md`（按时间倒序），任务书在 `docs/stage1-handoff.md`。
 > 仓库 `<repo>`，`main` @ `2b73454`，CI 6/6 绿。
