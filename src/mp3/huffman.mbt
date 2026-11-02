@@ -251,11 +251,28 @@ pub fn GranuleInfo::big_values(
   global_gain : Int32,
   table : Int32,
 ) -> GranuleInfo {
+  GranuleInfo::scaled(part2_3_length, big_values, global_gain, table, 0)
+}
+
+///|
+/// Side information for one granule whose main data starts with scalefactors.
+///
+/// `scalefac_compress` selects the `slen1`/`slen2` widths of the 21
+/// scalefactors; zero means no scalefactor bits. The Huffman tables remain the
+/// same in all three regions, so `region0_count` and `region1_count` stay zero
+/// and the decoder simply keeps the single selected table across the pair list.
+pub fn GranuleInfo::scaled(
+  part2_3_length : Int32,
+  big_values : Int32,
+  global_gain : Int32,
+  table : Int32,
+  scalefac_compress : Int32,
+) -> GranuleInfo {
   {
     part2_3_length,
     big_values,
     global_gain,
-    scalefac_compress: 0,
+    scalefac_compress,
     window_switching_flag: 0,
     block_type: 0,
     mixed_block_flag: 0,
@@ -267,6 +284,76 @@ pub fn GranuleInfo::big_values(
     subblock_gain2: 0,
     region0_count: 0,
     region1_count: 0,
+    preflag: 0,
+    scalefac_scale: 0,
+    count1table_select: 1,
+  }
+}
+
+///|
+/// Side information for one short-window granule.
+///
+/// A pure short block transmits no region boundaries: the switched-window
+/// side-info form carries `table_select0`, `table_select2` and three subblock
+/// gains instead. The encoder still uses one table across the whole pair list,
+/// so both selects are the same and the gains are zero.
+pub fn GranuleInfo::short(
+  part2_3_length : Int32,
+  big_values : Int32,
+  global_gain : Int32,
+  table : Int32,
+  scalefac_compress : Int32,
+) -> GranuleInfo {
+  {
+    part2_3_length,
+    big_values,
+    global_gain,
+    scalefac_compress,
+    window_switching_flag: 1,
+    block_type: 2,
+    mixed_block_flag: 0,
+    table_select0: table,
+    table_select1: table,
+    table_select2: table,
+    subblock_gain0: 0,
+    subblock_gain1: 0,
+    subblock_gain2: 0,
+    region0_count: 8,
+    region1_count: 63,
+    preflag: 0,
+    scalefac_scale: 0,
+    count1table_select: 1,
+  }
+}
+
+///|
+/// Side information for a start or stop granule. These are long-block
+/// coefficient layouts under a switching window, so they keep the long
+/// scalefactor transmission but set `window_switching_flag` and `block_type`.
+pub fn GranuleInfo::switched_long(
+  part2_3_length : Int32,
+  big_values : Int32,
+  global_gain : Int32,
+  table : Int32,
+  scalefac_compress : Int32,
+  block_type : Int32,
+) -> GranuleInfo {
+  {
+    part2_3_length,
+    big_values,
+    global_gain,
+    scalefac_compress,
+    window_switching_flag: 1,
+    block_type,
+    mixed_block_flag: 0,
+    table_select0: table,
+    table_select1: table,
+    table_select2: table,
+    subblock_gain0: 0,
+    subblock_gain1: 0,
+    subblock_gain2: 0,
+    region0_count: 7,
+    region1_count: 63,
     preflag: 0,
     scalefac_scale: 0,
     count1table_select: 1,

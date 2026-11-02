@@ -51,10 +51,78 @@ pub const LongBlockSamples : Int32 = 36
 pub const LongBlockLines : Int32 = 18
 
 ///|
+/// Subband samples consumed by one short-window transform.
+pub const ShortBlockSamples : Int32 = 12
+
+///|
+/// Frequency lines a short-window transform produces.
+pub const ShortBlockLines : Int32 = 6
+
+///|
+/// MPEG-1 Layer III block types in side information order.
+pub const BlockTypeLong : Int32 = 0
+
+///|
+pub const BlockTypeStart : Int32 = 1
+
+///|
+pub const BlockTypeShort : Int32 = 2
+
+///|
+pub const BlockTypeStop : Int32 = 3
+
+///|
 /// Sine window of the long block. ISO/IEC 11172-3 §2.4.2.2 uses
 /// `sin(pi/36 (n + 0.5))` for the 36-sample long-block window.
 pub fn long_block_window(index : Int32) -> Double {
   @math.sin(@math.PI / 36.0 * (index.to_double() + 0.5))
+}
+
+///|
+/// Sine window of one 12-sample short block.
+pub fn short_block_window(index : Int32) -> Double {
+  @math.sin(@math.PI / 12.0 * (index.to_double() + 0.5))
+}
+
+///|
+/// Window of a start block: long rising half, a flat bridge into the short
+/// block's first half, then the 6-sample short falling half.
+pub fn start_block_window(index : Int32) -> Double {
+  if index < 18 {
+    long_block_window(index)
+  } else if index < 24 {
+    1.0
+  } else if index < 30 {
+    @math.sin(@math.PI / 12.0 * (index.to_double() - 18.0 + 0.5))
+  } else {
+    0.0
+  }
+}
+
+///|
+/// Window of a stop block, the reverse of a start block.
+pub fn stop_block_window(index : Int32) -> Double {
+  if index < 6 {
+    0.0
+  } else if index < 12 {
+    @math.sin(@math.PI / 12.0 * (index.to_double() - 6.0 + 0.5))
+  } else if index < 18 {
+    1.0
+  } else {
+    long_block_window(index)
+  }
+}
+
+///|
+/// Window selected by a block type.
+pub fn block_window(block_type : Int32, index : Int32) -> Double {
+  if block_type == BlockTypeStart {
+    start_block_window(index)
+  } else if block_type == BlockTypeStop {
+    stop_block_window(index)
+  } else {
+    long_block_window(index)
+  }
 }
 
 ///|
@@ -217,6 +285,73 @@ pub fn mdct_long(block : Array[Double]) -> Array[Double] raise AnalysisError {
 }
 
 ///|
+/// One 36->18 transform with the window of a long, start or stop block.
+pub fn mdct_switched_long(
+  block : Array[Double],
+  block_type : Int32,
+) -> Array[Double] raise AnalysisError {
+  if block.length() != LongBlockSamples {
+    raise BadBlockLength(block.length())
+  }
+  if block_type == BlockTypeShort {
+    raise BadBlockLength(block.length())
+  }
+  let windowed = Array::make(LongBlockSamples, 0.0)
+  for index = 0; index < LongBlockSamples; index = index + 1 {
+    windowed[index] = block[index] * block_window(block_type, index)
+  }
+  let lines = Array::make(LongBlockLines, 0.0)
+  for line = 0; line < LongBlockLines; line = line + 1 {
+    let mut sum = 0.0
+    for index = 0; index < LongBlockSamples; index = index + 1 {
+      sum = sum +
+        windowed[index] *
+        @math.cos(
+          @math.PI /
+          72.0 *
+          (2.0 * index.to_double() + 19.0) *
+          (2.0 * line.to_double() + 1.0),
+        )
+    }
+    lines[line] = sum
+  }
+  lines
+}
+
+///|
+/// Short-block MDCT: 12 subband samples in, six frequency lines out.
+///
+/// The transform is the same DCT-IV with N=12. In one 36-sample block the
+/// three windows start at offsets 6, 12 and 18, which is what lets a start
+/// window's last six samples overlap the first short window and a stop window's
+/// first six samples overlap the last one.
+pub fn mdct_short(block : Array[Double]) -> Array[Double] raise AnalysisError {
+  if block.length() != ShortBlockSamples {
+    raise BadBlockLength(block.length())
+  }
+  let windowed = Array::make(ShortBlockSamples, 0.0)
+  for index = 0; index < ShortBlockSamples; index = index + 1 {
+    windowed[index] = block[index] * short_block_window(index)
+  }
+  let lines = Array::make(ShortBlockLines, 0.0)
+  for line = 0; line < ShortBlockLines; line = line + 1 {
+    let mut sum = 0.0
+    for index = 0; index < ShortBlockSamples; index = index + 1 {
+      sum = sum +
+        windowed[index] *
+        @math.cos(
+          @math.PI /
+          24.0 *
+          (2.0 * index.to_double() + 7.0) *
+          (2.0 * line.to_double() + 1.0),
+        )
+    }
+    lines[line] = sum
+  }
+  lines
+}
+
+///|
 /// Gain the decoder's synthesis applies to the lines an encoder writes.
 ///
 /// The decoder's inverse MDCT is the untransposed kernel of `mdct_long`, and
@@ -233,6 +368,10 @@ pub fn mdct_long(block : Array[Double]) -> Array[Double] raise AnalysisError {
 /// times off without it, because the analysis window is `D / 32` (Table C.1)
 /// while the lines have to land in the synthesis units of Table D.
 pub const SynthesisGain : Double = 9.0
+
+///|
+/// Synthesis gain of the 12-sample short transform: `N / 4 = 3`.
+pub const ShortSynthesisGain : Double = 3.0
 
 ///|
 /// One channel of long-block analysis: the filterbank plus the 18 subband
@@ -255,18 +394,19 @@ pub fn ChannelAnalysis::new() -> ChannelAnalysis {
 
 ///|
 /// Turn 576 PCM samples, in the same -1..1 scale the decoder produces, into the
-/// 576 frequency lines of one granule, ordered subband-major: line
-/// `18 * subband + k` is the `k`-th MDCT line of `subband`.
+/// 576 frequency lines of one granule, ordered subband-major for long blocks.
 ///
 /// The 18 samples of the previous granule are prepended, so consecutive
 /// granules overlap by half a block exactly as §2.4.2.2 requires. The result is
-/// divided by `SynthesisGain`, so the lines are already in the units the
-/// decoder's requantisation expects, and then run through
-/// `antialias_compensation`, which is the inverse of the stage the decoder runs
-/// before its inverse MDCT.
-pub fn ChannelAnalysis::granule(
+/// divided by the transform's synthesis gain, so the lines are already in the
+/// units the decoder's requantisation expects. For a pure short block the result
+/// is already in the `[sfb][window][line]` order Huffman coding requires; for
+/// long/start/stop blocks it is the usual frequency order and receives the
+/// decoder's antialias pre-compensation.
+pub fn ChannelAnalysis::granule_block(
   self : ChannelAnalysis,
   pcm : Array[Double],
+  block_type : Int32,
 ) -> Array[Double] raise AnalysisError {
   if pcm.length() != GranulePcm {
     raise BadGranuleLength(pcm.length())
@@ -283,22 +423,48 @@ pub fn ChannelAnalysis::granule(
     }
   }
   let block = Array::make(LongBlockSamples, 0.0)
-  let lines = Array::make(SubbandCount * LongBlockLines, 0.0)
+  let lines = Array::make(576, 0.0)
   for subband = 0; subband < SubbandCount; subband = subband + 1 {
     for index = 0; index < LinesPerGranule; index = index + 1 {
       block[index] = self.carry[subband * LinesPerGranule + index]
       block[index + LinesPerGranule] = fresh[subband * LinesPerGranule + index]
     }
-    let spectrum = mdct_long(block)
-    for line = 0; line < LongBlockLines; line = line + 1 {
-      lines[subband * LongBlockLines + line] = spectrum[line] / SynthesisGain
+    if block_type == BlockTypeShort {
+      let window_block = Array::make(ShortBlockSamples, 0.0)
+      for window = 0; window < 3; window = window + 1 {
+        for index = 0; index < ShortBlockSamples; index = index + 1 {
+          window_block[index] = block[6 + window * 6 + index]
+        }
+        let spectrum = mdct_short(window_block)
+        for line = 0; line < ShortBlockLines; line = line + 1 {
+          lines[short_huffman_index(subband, window, line)] = spectrum[line] /
+            ShortSynthesisGain
+        }
+      }
+    } else {
+      let spectrum = mdct_switched_long(block, block_type)
+      for line = 0; line < LongBlockLines; line = line + 1 {
+        lines[subband * LongBlockLines + line] = spectrum[line] / SynthesisGain
+      }
     }
   }
-  antialias_compensation(lines)
+  if block_type != BlockTypeShort {
+    antialias_compensation(lines)
+  }
   for index = 0; index < fresh.length(); index = index + 1 {
     self.carry[index] = fresh[index]
   }
   lines
+}
+
+///|
+/// Long-block granule analysis; kept as the stable entry point for callers and
+/// tests that do not schedule window switching.
+pub fn ChannelAnalysis::granule(
+  self : ChannelAnalysis,
+  pcm : Array[Double],
+) -> Array[Double] raise AnalysisError {
+  self.granule_block(pcm, BlockTypeLong)
 }
 
 ///|

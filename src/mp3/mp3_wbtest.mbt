@@ -129,6 +129,17 @@ test "encode : one second of stereo silence is 39 valid frames" {
 }
 
 ///|
+test "encode : headroom only engages near full scale" {
+  assert_eq(encode_headroom([0, 16384, -16384]), 1.0)
+  let near_full = encode_headroom([0, 32440, -32440])
+  assert_true(near_full > 0.85 && near_full < 0.95)
+  // Every near-full-scale input is mapped to the same reserved peak, so the
+  // 99 % and 100 % cases do not sit on opposite sides of a volume threshold.
+  let full = encode_headroom([32767, -32768])
+  assert_true((full - near_full).abs() < 0.02)
+}
+
+///|
 test "encode : rejects what v1 does not support" {
   assert_eq(rejects([0, 0, 0, 0], 48000, 2), true)
   assert_eq(rejects([0, 0, 0, 0], 44100, 3), true)

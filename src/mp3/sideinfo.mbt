@@ -20,7 +20,7 @@ pub(all) struct GranuleInfo {
   scalefac_compress : Int32
   /// 1 when the granule uses window switching (short or mixed blocks).
   window_switching_flag : Int32
-  /// 0 long, 1 start, 3 short (2 is reserved); only with window switching.
+  /// 0 long, 1 start, 2 short, 3 stop; only with window switching.
   block_type : Int32
   /// Long-block scalefactor bands below the switched window region.
   mixed_block_flag : Int32

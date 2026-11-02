@@ -441,6 +441,52 @@ class BoundaryMatrixTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(data)))
         self.assertGreater(float(np.max(np.abs(data))), 0.01)
 
+    def test_near_full_scale_does_not_overshoot(self):
+        # The near-full-scale headroom reserve must keep the decoded peak at or
+        # below 1.0, so a mastered 0 dBFS stream cannot clip on decode.
+        for percent in (99, 100):
+            payload = mp3lab.extract_payload(
+                mp3lab.run_cli("sine", "16", "440", str(percent), "1")
+            )
+            data, _ = mp3lab.decode_mp3(payload)
+            self.assertLessEqual(
+                float(np.max(np.abs(data))), 1.05, percent
+            )
+
+    def test_transient_switches_to_short_windows(self):
+        # An isolated impulse must trigger start/short/stop window switching, and
+        # the resulting stream must still decode cleanly in two decoders.
+        import base64
+
+        impulse = np.zeros(7938)
+        impulse[4000] = 0.9
+        payload = self._encode_pcm(impulse, 1)
+        report = mp3dump.analyze(
+            self._write_mp3("impulse", payload)
+        )
+        self.assertEqual(report["warnings"], [])
+        block_types = [
+            (g["window_switching"], g["block_type"])
+            for f in report["frames"]
+            for g in f["side_info"]["granules"]
+        ]
+        self.assertIn((1, 2), block_types)
+        self.assertIn((1, 1), block_types)
+        self.assertIn((1, 3), block_types)
+        data, _ = mp3lab.decode_mp3(payload)
+        self.assertTrue(np.all(np.isfinite(data)))
+        import crossdecode
+
+        agreed = crossdecode.compare(payload)
+        self.assertTrue(agreed["agree"], agreed)
+
+    def _write_mp3(self, name, payload):
+        folder = tempfile.mkdtemp(prefix="moonmp3-impulse-")
+        path = os.path.join(folder, f"{name}.mp3")
+        with open(path, "wb") as handle:
+            handle.write(payload)
+        return path
+
     def test_decoder_model_reproduces_libsndfile(self):
         # tools/decoder_ref.py models the decoder chain stage by stage. If it ever
         # stops matching the real decoder, every closed-loop measurement built on

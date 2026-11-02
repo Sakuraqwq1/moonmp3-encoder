@@ -106,16 +106,47 @@ let dequant_levels : Array[Double] = [
 pub struct GranuleQuantiser {
   powers : Array[Double]
   lines : Array[Double]
+  /// Scalefactor band of every line. For long blocks this is 0..21 (band 21 is
+  /// the 158-line tail with no transmitted scalefactor); for short blocks the
+  /// lines are already in Huffman `[sfb][window][line]` order and this holds the
+  /// 36-value field index `3*sfb + window` for every line, with 36 for sfb 12.
+  bands : Array[Int32]
 }
 
 ///|
 /// Prepare a granule for repeated quantisation.
 pub fn GranuleQuantiser::new(lines : Array[Double]) -> GranuleQuantiser {
+  GranuleQuantiser::new_typed(lines, BlockTypeLong)
+}
+
+///|
+/// Prepare a granule for repeated quantisation, mapping every line to its
+/// scalefactor field according to the block type.
+pub fn GranuleQuantiser::new_typed(
+  lines : Array[Double],
+  block_type : Int32,
+) -> GranuleQuantiser {
   let powers = Array::make(lines.length(), 0.0)
   for index = 0; index < lines.length(); index = index + 1 {
     powers[index] = @math.pow(lines[index].abs(), 0.75)
   }
-  GranuleQuantiser::{ powers, lines, }
+  let bands = Array::make(lines.length(), 21)
+  if block_type == BlockTypeShort {
+    for index = 0; index < lines.length(); index = index + 1 {
+      bands[index] = short_scalefactor_of_line(index)
+    }
+  } else {
+    for band = 0; band < LongScalefactorBandCount; band = band + 1 {
+      let start = scalefactor_band_start(band)
+      let stop = scalefactor_band_end(band)
+      for index = start
+          index < stop && index < lines.length()
+          index = index + 1 {
+        bands[index] = band
+      }
+    }
+  }
+  GranuleQuantiser::{ powers, lines, bands, }
 }
 
 ///|
@@ -135,6 +166,179 @@ pub fn GranuleQuantiser::quantise(
     }
   }
   values
+}
+
+///|
+/// Quantise with a per-band scalefactor vector.
+///
+/// The decoder attenuates band `b` by `2^(-m * sf[b])`, where `m` is
+/// `0.5 * (1 + scalefac_scale)`. Inverting that before quantisation is the same
+/// as lowering the band's gain by `4 * m * sf[b]`, which is why the per-line
+/// scale below is `2^(0.75 * m * sf[b])` on top of the global step.
+pub fn GranuleQuantiser::quantise_scaled(
+  self : GranuleQuantiser,
+  gain : Int32,
+  scalefactors : Array[Int32],
+  scalefac_scale : Int32,
+) -> Array[Int32] {
+  let amplitude = @math.pow(2.0, (gain.to_double() - 210.0) / 4.0)
+  let base = 1.0 / @math.pow(amplitude, 0.75)
+  let multiplier = scalefactor_step_multiplier(scalefac_scale)
+  let band_scale = Array::make(LongFrequencyBandCount, 1.0)
+  for band = 0; band < LongFrequencyBandCount; band = band + 1 {
+    let value = if band < scalefactors.length() {
+      scalefactors[band]
+    } else {
+      0
+    }
+    band_scale[band] = @math.pow(2.0, 0.75 * multiplier * value.to_double())
+  }
+  let values = Array::make(self.powers.length(), 0)
+  for index = 0; index < self.powers.length(); index = index + 1 {
+    let level = (self.powers[index] * base * band_scale[self.bands[index]] +
+      QuantizeOffset)
+      .floor()
+      .to_int()
+    if level > 0 {
+      let clamped = if level > MaxQuantLevel { MaxQuantLevel } else { level }
+      values[index] = if self.lines[index] < 0.0 { -clamped } else { clamped }
+    }
+  }
+  values
+}
+
+///|
+/// Squared reconstruction error of `values` under a per-band scalefactor
+/// vector. The scalefactor attenuation is applied after the global
+/// dequantisation, exactly where the decoder applies it.
+pub fn GranuleQuantiser::error_scaled(
+  self : GranuleQuantiser,
+  values : Array[Int32],
+  gain : Int32,
+  scalefactors : Array[Int32],
+  scalefac_scale : Int32,
+) -> Double {
+  let amplitude = @math.pow(2.0, (gain.to_double() - 210.0) / 4.0)
+  let multiplier = scalefactor_step_multiplier(scalefac_scale)
+  let band_attenuation = Array::make(LongFrequencyBandCount, 1.0)
+  for band = 0; band < LongFrequencyBandCount; band = band + 1 {
+    let value = if band < scalefactors.length() {
+      scalefactors[band]
+    } else {
+      0
+    }
+    band_attenuation[band] = @math.pow(2.0, -multiplier * value.to_double())
+  }
+  let mut total = 0.0
+  for index = 0; index < values.length(); index = index + 1 {
+    let level = values[index].abs()
+    let magnitude = dequant_levels[level] *
+      amplitude *
+      band_attenuation[self.bands[index]]
+    let reconstructed = if values[index] < 0 { -magnitude } else { magnitude }
+    let difference = reconstructed - self.lines[index]
+    total = total + difference * difference
+  }
+  total
+}
+
+///|
+/// Quantise a short block with its 36-value scalefactor vector. The decoder's
+/// attenuation is `2^(-m * sf[3*sfb + window])`; here it is inverted and folded
+/// into the per-line scale exactly as in `quantise_scaled`.
+pub fn GranuleQuantiser::quantise_scaled_short(
+  self : GranuleQuantiser,
+  gain : Int32,
+  scalefactors : Array[Int32],
+  scalefac_scale : Int32,
+) -> Array[Int32] {
+  let amplitude = @math.pow(2.0, (gain.to_double() - 210.0) / 4.0)
+  let base = 1.0 / @math.pow(amplitude, 0.75)
+  let multiplier = scalefactor_step_multiplier(scalefac_scale)
+  let field_scale = Array::make(ShortScalefactorCount + 1, 1.0)
+  for field = 0; field < ShortScalefactorCount; field = field + 1 {
+    let value = if field < scalefactors.length() {
+      scalefactors[field]
+    } else {
+      0
+    }
+    field_scale[field] = @math.pow(2.0, 0.75 * multiplier * value.to_double())
+  }
+  let values = Array::make(self.powers.length(), 0)
+  for index = 0; index < self.powers.length(); index = index + 1 {
+    let level = (self.powers[index] * base * field_scale[self.bands[index]] +
+      QuantizeOffset)
+      .floor()
+      .to_int()
+    if level > 0 {
+      let clamped = if level > MaxQuantLevel { MaxQuantLevel } else { level }
+      values[index] = if self.lines[index] < 0.0 { -clamped } else { clamped }
+    }
+  }
+  values
+}
+
+///|
+/// Squared reconstruction error of a short block under its 36-value
+/// scalefactor vector.
+pub fn GranuleQuantiser::error_scaled_short(
+  self : GranuleQuantiser,
+  values : Array[Int32],
+  gain : Int32,
+  scalefactors : Array[Int32],
+  scalefac_scale : Int32,
+) -> Double {
+  let amplitude = @math.pow(2.0, (gain.to_double() - 210.0) / 4.0)
+  let multiplier = scalefactor_step_multiplier(scalefac_scale)
+  let field_attenuation = Array::make(ShortScalefactorCount + 1, 1.0)
+  for field = 0; field < ShortScalefactorCount; field = field + 1 {
+    let value = if field < scalefactors.length() {
+      scalefactors[field]
+    } else {
+      0
+    }
+    field_attenuation[field] = @math.pow(2.0, -multiplier * value.to_double())
+  }
+  let mut total = 0.0
+  for index = 0; index < values.length(); index = index + 1 {
+    let magnitude = dequant_levels[values[index].abs()] *
+      amplitude *
+      field_attenuation[self.bands[index]]
+    let reconstructed = if values[index] < 0 { -magnitude } else { magnitude }
+    let difference = reconstructed - self.lines[index]
+    total = total + difference * difference
+  }
+  total
+}
+
+///|
+/// Squared reconstruction error restricted to one frequency partition.
+/// Used by the scalefactor allocator to price a band without making the other
+/// bands pay for a full-granule scan.
+pub fn GranuleQuantiser::band_error(
+  self : GranuleQuantiser,
+  values : Array[Int32],
+  gain : Int32,
+  scalefactors : Array[Int32],
+  scalefac_scale : Int32,
+  band : Int32,
+) -> Double {
+  let amplitude = @math.pow(2.0, (gain.to_double() - 210.0) / 4.0)
+  let multiplier = scalefactor_step_multiplier(scalefac_scale)
+  let sf = if band < scalefactors.length() { scalefactors[band] } else { 0 }
+  let attenuation = @math.pow(2.0, -multiplier * sf.to_double())
+  let start = scalefactor_band_start(band)
+  let stop = scalefactor_band_end(band)
+  let mut total = 0.0
+  for index = start; index < stop && index < values.length(); index = index + 1 {
+    let magnitude = dequant_levels[values[index].abs()] *
+      amplitude *
+      attenuation
+    let reconstructed = if values[index] < 0 { -magnitude } else { magnitude }
+    let difference = reconstructed - self.lines[index]
+    total = total + difference * difference
+  }
+  total
 }
 
 ///|

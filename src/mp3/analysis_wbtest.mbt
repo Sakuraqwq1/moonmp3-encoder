@@ -129,6 +129,178 @@ test "mdct : overlapping blocks reconstruct through time-domain aliasing cancell
 }
 
 ///|
+test "windows : start and stop are the short block's two ends" {
+  for index = 0; index < 18; index = index + 1 {
+    let a = long_block_window(index)
+    let b = long_block_window(index + 18)
+    assert_true((a * a + b * b - 1.0).abs() < 0.000000000001)
+  }
+  for index = 0; index < 6; index = index + 1 {
+    let a = short_block_window(index)
+    let b = short_block_window(index + 6)
+    assert_true((a * a + b * b - 1.0).abs() < 0.0000000001)
+  }
+  // A start window's last six samples are the short window's falling half, and
+  // a stop window's first six samples are its rising half.
+  for index = 24; index < 30; index = index + 1 {
+    assert_true(
+      (start_block_window(index) - short_block_window(index - 18)).abs() <
+      0.000000000001,
+    )
+  }
+  for index = 6; index < 12; index = index + 1 {
+    assert_true(
+      (stop_block_window(index) - short_block_window(index - 6)).abs() <
+      0.000000000001,
+    )
+  }
+}
+
+///|
+test "mdct : long/start/short/stop cancel their own time-domain aliasing" {
+  let blocks = 6
+  let signal = Array::make(18 * (blocks - 1) + 36, 0.0)
+  for index = 0; index < signal.length(); index = index + 1 {
+    signal[index] = @math.sin(index.to_double() * 0.31) +
+      0.2 * @math.cos(index.to_double() * 0.11)
+  }
+  let types = [
+    BlockTypeLong,
+    BlockTypeStart,
+    BlockTypeShort,
+    BlockTypeShort,
+    BlockTypeStop,
+    BlockTypeLong,
+  ]
+  // The untransposed inverse of an N-point MDCT has gain N/2, which differs
+  // between the 36-point (18) and 12-point (6) transforms. Normalise each
+  // transform's lines by that gain before the inverse so the short and long
+  // contributions overlap at a common scale.
+  let accumulated = Array::make(signal.length(), 0.0)
+  for b = 0; b < blocks; b = b + 1 {
+    let block = Array::make(36, 0.0)
+    for index = 0; index < 36; index = index + 1 {
+      block[index] = signal[b * 18 + index]
+    }
+    if types[b] == BlockTypeShort {
+      for window = 0; window < 3; window = window + 1 {
+        let small = Array::make(12, 0.0)
+        for index = 0; index < 12; index = index + 1 {
+          small[index] = block[6 + window * 6 + index]
+        }
+        let lines = mdct_short(small) catch {
+          (_ : AnalysisError) => {
+            assert_true(false)
+            return
+          }
+        }
+        let normalised = Array::make(ShortBlockLines, 0.0)
+        for index = 0; index < ShortBlockLines; index = index + 1 {
+          normalised[index] = lines[index] / 3.0
+        }
+        let decoded = imdct_short(normalised) catch {
+          (_ : AnalysisError) => {
+            assert_true(false)
+            return
+          }
+        }
+        for index = 0; index < 12; index = index + 1 {
+          accumulated[b * 18 + 6 + window * 6 + index] = accumulated[b * 18 +
+            6 +
+            window * 6 +
+            index] +
+            decoded[index]
+        }
+      }
+    } else {
+      let lines = mdct_switched_long(block, types[b]) catch {
+        (_ : AnalysisError) => {
+          assert_true(false)
+          return
+        }
+      }
+      let normalised = Array::make(LongBlockLines, 0.0)
+      for index = 0; index < LongBlockLines; index = index + 1 {
+        normalised[index] = lines[index] / 9.0
+      }
+      let decoded = imdct_switched_long(normalised, types[b]) catch {
+        (_ : AnalysisError) => {
+          assert_true(false)
+          return
+        }
+      }
+      for index = 0; index < 36; index = index + 1 {
+        accumulated[b * 18 + index] = accumulated[b * 18 + index] +
+          decoded[index]
+      }
+    }
+  }
+  let mut worst = 0.0
+  let mut peak = 0.0
+  for index = 18; index < signal.length() - 18; index = index + 1 {
+    let error = (accumulated[index] - signal[index]).abs()
+    if error > worst {
+      worst = error
+    }
+    if signal[index].abs() > peak {
+      peak = signal[index].abs()
+    }
+  }
+  assert_true(worst / peak < 0.0000000001)
+}
+
+///|
+/// Inverse of a long/start/stop MDCT with its own window.
+fn imdct_switched_long(
+  lines : Array[Double],
+  block_type : Int32,
+) -> Array[Double] raise AnalysisError {
+  if lines.length() != LongBlockLines {
+    raise BadBlockLength(lines.length())
+  }
+  let block = Array::make(LongBlockSamples, 0.0)
+  for index = 0; index < LongBlockSamples; index = index + 1 {
+    let mut sum = 0.0
+    for line = 0; line < LongBlockLines; line = line + 1 {
+      sum = sum +
+        lines[line] *
+        @math.cos(
+          @math.PI /
+          72.0 *
+          (2.0 * index.to_double() + 19.0) *
+          (2.0 * line.to_double() + 1.0),
+        )
+    }
+    block[index] = sum * block_window(block_type, index)
+  }
+  block
+}
+
+///|
+/// Inverse of the 12-point short MDCT, followed by the short window.
+fn imdct_short(lines : Array[Double]) -> Array[Double] raise AnalysisError {
+  if lines.length() != ShortBlockLines {
+    raise BadBlockLength(lines.length())
+  }
+  let block = Array::make(ShortBlockSamples, 0.0)
+  for index = 0; index < ShortBlockSamples; index = index + 1 {
+    let mut sum = 0.0
+    for line = 0; line < ShortBlockLines; line = line + 1 {
+      sum = sum +
+        lines[line] *
+        @math.cos(
+          @math.PI /
+          24.0 *
+          (2.0 * index.to_double() + 7.0) *
+          (2.0 * line.to_double() + 1.0),
+        )
+    }
+    block[index] = sum * short_block_window(index)
+  }
+  block
+}
+
+///|
 /// Inverse of `mdct_long`: 18 lines back to 36 subband samples, with the same
 /// kernel and the same sine window. Used by the round-trip test above; the
 /// encoder never needs it.

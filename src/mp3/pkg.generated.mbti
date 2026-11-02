@@ -12,6 +12,14 @@ pub const Bitrate128kbps : Int32 = 128000
 
 pub const BitrateIndex128 : Int32 = 9
 
+pub const BlockTypeLong : Int32 = 0
+
+pub const BlockTypeShort : Int32 = 2
+
+pub const BlockTypeStart : Int32 = 1
+
+pub const BlockTypeStop : Int32 = 3
+
 pub const FrameSamples : Int32 = 1152
 
 pub const GranulePcm : Int32 = 576
@@ -26,6 +34,10 @@ pub const LongBlockLines : Int32 = 18
 
 pub const LongBlockSamples : Int32 = 36
 
+pub const LongFrequencyBandCount : Int32 = 22
+
+pub const LongScalefactorBandCount : Int32 = 21
+
 pub const MaxQuantLevel : Int32 = 15
 
 pub const ModeMono : Int32 = 3
@@ -37,6 +49,20 @@ pub const QuantizeOffset : Double = 0.4054
 pub const SampleRate44100 : Int32 = 44100
 
 pub const SampleRateIndex44100 : Int32 = 0
+
+pub const ScalefactorsInGroup1 : Int32 = 11
+
+pub const ScalefactorsInGroup2 : Int32 = 10
+
+pub const ShortBlockLines : Int32 = 6
+
+pub const ShortBlockSamples : Int32 = 12
+
+pub const ShortFrequencyBandCount : Int32 = 37
+
+pub const ShortScalefactorCount : Int32 = 36
+
+pub const ShortSynthesisGain : Double = 3.0
 
 pub const StepSamples : Int32 = 32
 
@@ -50,7 +76,13 @@ pub fn big_values_cost(Array[Int32], Int32, Int32) -> Int32
 
 pub fn big_values_needed(Array[Int32]) -> Int32
 
+pub fn block_window(Int32, Int32) -> Double
+
 pub fn choose_table(Array[Int32], Int32) -> Int32
+
+pub fn copy_scalefactors(Array[Int32]) -> Array[Int32]
+
+pub fn copy_short_scalefactors(Array[Int32]) -> Array[Int32]
 
 pub fn count1_bits(Array[Int32]) -> Int32 raise Count1Error
 
@@ -59,6 +91,8 @@ pub fn count1_nonzero(Array[Int32]) -> Int32
 pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise EncodeError
 
 pub fn encode_count1_spectrum(Int32, Int32, Array[Int32], Int32) -> Bytes raise Count1Error
+
+pub fn encode_headroom(Array[Int32]) -> Double
 
 pub fn global_gain_for_peak(Double, Int32) -> Int32
 
@@ -70,6 +104,10 @@ pub fn matrix_element(Int32, Int32) -> Double
 
 pub fn mdct_long(Array[Double]) -> Array[Double] raise AnalysisError
 
+pub fn mdct_short(Array[Double]) -> Array[Double] raise AnalysisError
+
+pub fn mdct_switched_long(Array[Double], Int32) -> Array[Double] raise AnalysisError
+
 pub fn pair_cost(Int32, Int32, Int32) -> Int32
 
 pub fn peak_absolute(Array[Double]) -> Double
@@ -77,6 +115,50 @@ pub fn peak_absolute(Array[Double]) -> Double
 pub fn quantize_with_gain(Array[Double], Int32) -> Array[Int32]
 
 pub fn region_peak(Array[Int32], Int32, Int32) -> Int32
+
+pub fn scalefactor_band_end(Int32) -> Int32
+
+pub fn scalefactor_band_of_line(Int32) -> Int32
+
+pub fn scalefactor_band_start(Int32) -> Int32
+
+pub fn scalefactor_band_width(Int32) -> Int32
+
+pub fn scalefactor_bit_count(Int32) -> Int32
+
+pub fn scalefactor_compress(Array[Int32]) -> Int32
+
+pub fn scalefactor_compress_for(Int32, Int32) -> Int32
+
+pub fn scalefactor_group_maxima(Array[Int32]) -> (Int32, Int32)
+
+pub fn scalefactor_step_multiplier(Int32) -> Double
+
+pub fn scalefactor_widths(Int32) -> (Int32, Int32)
+
+pub fn short_block_window(Int32) -> Double
+
+pub fn short_huffman_index(Int32, Int32, Int32) -> Int32
+
+pub fn short_scalefactor_band_end(Int32) -> Int32
+
+pub fn short_scalefactor_band_of_frequency(Int32) -> Int32
+
+pub fn short_scalefactor_band_start(Int32) -> Int32
+
+pub fn short_scalefactor_band_width(Int32) -> Int32
+
+pub fn short_scalefactor_bit_count(Int32) -> Int32
+
+pub fn short_scalefactor_compress(Array[Int32]) -> Int32
+
+pub fn short_scalefactor_group_maxima(Array[Int32]) -> (Int32, Int32)
+
+pub fn short_scalefactor_of_line(Int32) -> Int32
+
+pub fn start_block_window(Int32) -> Double
+
+pub fn stop_block_window(Int32) -> Double
 
 pub fn table_extent(Int32) -> Int32
 
@@ -90,7 +172,15 @@ pub fn write_header(@bits.BitWriter, Int32, Int32, Int32, Int32) -> Unit
 
 pub fn write_pair(@bits.BitWriter, Int32, Int32, Int32) -> Int32 raise HuffmanError
 
+pub fn write_scalefactors(@bits.BitWriter, Array[Int32], Int32) -> Int32
+
+pub fn write_short_scalefactors(@bits.BitWriter, Array[Int32], Int32) -> Int32
+
 pub fn write_side_info(@bits.BitWriter, Int32, Int32, Array[Int32], Array[GranuleInfo]) -> Unit
+
+pub fn zero_scalefactors() -> Array[Int32]
+
+pub fn zero_short_scalefactors() -> Array[Int32]
 
 // Errors
 pub suberror AnalysisError {
@@ -136,6 +226,7 @@ pub struct ChannelAnalysis {
   carry : Array[Double]
 }
 pub fn ChannelAnalysis::granule(Self, Array[Double]) -> Array[Double] raise AnalysisError
+pub fn ChannelAnalysis::granule_block(Self, Array[Double], Int32) -> Array[Double] raise AnalysisError
 pub fn ChannelAnalysis::new() -> Self
 
 pub struct FrameSizer {
@@ -171,15 +262,25 @@ pub(all) struct GranuleInfo {
 }
 pub fn GranuleInfo::big_values(Int32, Int32, Int32, Int32) -> Self
 pub fn GranuleInfo::count1(Int32, Int32) -> Self
+pub fn GranuleInfo::scaled(Int32, Int32, Int32, Int32, Int32) -> Self
+pub fn GranuleInfo::short(Int32, Int32, Int32, Int32, Int32) -> Self
 pub fn GranuleInfo::silent() -> Self
+pub fn GranuleInfo::switched_long(Int32, Int32, Int32, Int32, Int32, Int32) -> Self
 
 pub struct GranuleQuantiser {
   powers : Array[Double]
   lines : Array[Double]
+  bands : Array[Int32]
 }
+pub fn GranuleQuantiser::band_error(Self, Array[Int32], Int32, Array[Int32], Int32, Int32) -> Double
 pub fn GranuleQuantiser::error(Self, Array[Int32], Int32) -> Double
+pub fn GranuleQuantiser::error_scaled(Self, Array[Int32], Int32, Array[Int32], Int32) -> Double
+pub fn GranuleQuantiser::error_scaled_short(Self, Array[Int32], Int32, Array[Int32], Int32) -> Double
 pub fn GranuleQuantiser::new(Array[Double]) -> Self
+pub fn GranuleQuantiser::new_typed(Array[Double], Int32) -> Self
 pub fn GranuleQuantiser::quantise(Self, Int32) -> Array[Int32]
+pub fn GranuleQuantiser::quantise_scaled(Self, Int32, Array[Int32], Int32) -> Array[Int32]
+pub fn GranuleQuantiser::quantise_scaled_short(Self, Int32, Array[Int32], Int32) -> Array[Int32]
 
 pub struct MainDataReservoir {
   bytes : Array[Byte]
