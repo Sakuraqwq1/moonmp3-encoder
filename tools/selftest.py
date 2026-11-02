@@ -373,7 +373,11 @@ class AnalysisTests(unittest.TestCase):
             sf.write(reference_path, reference.astype(np.int16), 44100, subtype="PCM_16")
             with open(candidate_path, "wb") as handle:
                 handle.write(payload)
-            report = snr.measure(reference_path, candidate_path)
+            # The encoder's delay is the constant 1057 samples; searching for it
+            # by correlation on a periodic probe locks onto a neighbouring period
+            # and measures the alignment instead (16.2 dB here against 22.1 dB at
+            # the true delay), so the delay is given rather than searched.
+            report = snr.measure(reference_path, candidate_path, delay=1057)
         self.assertGreaterEqual(report["overall_snr_db"], 20.0)
         self.assertGreaterEqual(report["per_channel"][0]["correlation"], 0.99)
 

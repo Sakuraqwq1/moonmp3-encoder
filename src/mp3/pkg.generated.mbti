@@ -42,7 +42,7 @@ pub const StepSamples : Int32 = 32
 
 pub const SubbandCount : Int32 = 32
 
-pub const SynthesisGain : Double = 288.0
+pub const SynthesisGain : Double = 9.0
 
 pub const WindowTaps : Int32 = 512
 
@@ -126,6 +126,7 @@ pub suberror HuffmanError {
 pub struct AnalysisFilterbank {
   history : Array[Double]
   matrix : Array[Double]
+  mut step : Int32
 }
 pub fn AnalysisFilterbank::new() -> Self
 pub fn AnalysisFilterbank::step(Self, Array[Double]) -> Array[Double] raise AnalysisError

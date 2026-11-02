@@ -2,7 +2,7 @@
 """Independent numpy reference for the encoder's analysis layer.
 
 Every stage in `src/mp3/analysis.mbt` has to be checkable against numbers that
-were not produced by the same code. This module recomputes the two stages from
+were not produced by the same code. This module recomputes the stages from
 their defining sums — no folding, no precomputed matrix, straight double
 precision — and compares them line by line with what the MoonBit CLI reports:
 
@@ -12,15 +12,21 @@ precision — and compares them line by line with what the MoonBit CLI reports:
 
 The window coefficients are read from `src/mp3/window.mbt` on purpose: their
 provenance is verified separately by `tools/window_table.py`, so this reference
-is about the arithmetic, not about re-deriving the table.
+is about the arithmetic, not about re-deriving the table. That table is the
+synthesis window `D` (peak 1.144989014); the analysis window is `D / 32`
+(ISO/IEC 11172-3 Table C.1, peak 0.035780907), which is applied here.
 
-Definition used, ISO/IEC 11172-3 §2.4.2.2 and §2.4.3.1:
+Definition used, ISO/IEC 11172-3 §2.4.2.2 and §2.4.3.1 (Annex C.1.3, Figure C.4):
 
-    S[m] = sum(n = 0..511) x[n] C[n] cos((16 + (n mod 64))(2m + 1) pi / 64)
+    S[m] = sum(n = 0..511) x[n] C[n] cos((2m + 1)(n mod 64 - 16) pi / 64)
+    S[m] = -S[m] on odd steps for odd m            (Layer III orientation)
     X[k] = sum(n = 0..35) w[n] s[n] cos(pi / 72 (2n + 19)(2k + 1))
     w[n] = sin(pi / 36 (n + 0.5))
 
-with the odd-subband reversal and the 1/288 synthesis gain applied afterwards.
+and then, in the line domain, the 1/9 synthesis gain and the transpose of the
+decoder's antialias butterflies. The matrix is `(tap - 16)`, not `(16 + tap)`:
+the latter is the synthesis matrix and cannot be inverted by the decoder (see
+docs/handoff-2026-11-02-night.md).
 """
 
 from __future__ import annotations
@@ -42,8 +48,18 @@ SUBBANDS = 32
 WINDOW_TAPS = 512
 LINES_PER_GRANULE = 18
 GRANULE_PCM = 576
-SYNTHESIS_GAIN = 288.0
+SYNTHESIS_GAIN = 9.0
+WINDOW_SCALE = 1.0 / 32.0
+ANTIALIAS = 18
 RATE = 44100.0
+
+# ISO/IEC 11172-3 Table B.9, the rotation (cosine, sine) of each butterfly.
+ANTIALIAS_COSINE = np.array(
+    [0.857493, 0.881742, 0.949629, 0.983315, 0.995518, 0.999161, 0.999899, 0.999993]
+)
+ANTIALIAS_SINE = np.array(
+    [-0.514496, -0.471732, -0.313377, -0.181913, -0.094574, -0.040966, -0.014199, -0.003700]
+)
 
 
 def load_window() -> np.ndarray:
@@ -57,26 +73,32 @@ def load_window() -> np.ndarray:
 
 
 def matrix() -> np.ndarray:
-    tap = np.arange(64)
+    tap = np.arange(64) - 16
     subband = np.arange(SUBBANDS)
-    return np.cos((16 + tap)[None, :] * (2 * subband + 1)[:, None] * (np.pi / 64.0))
+    return np.cos((2 * subband + 1)[:, None] * tap[None, :] * (np.pi / 64.0))
 
 
 def filterbank_steps(pcm: np.ndarray, window: np.ndarray, history: np.ndarray):
     """Analysis filterbank: `len(pcm) // 32` steps, newest sample first.
 
     `history` is the 512-sample window carried between calls, so a stream is
-    analysed exactly as one continuous filterbank would.
+    analysed exactly as one continuous filterbank would. The odd-step sign of
+    the odd subbands is taken from the step index within the call; that is the
+    stream index too, because every call covers a whole number of granules and a
+    granule is 18 steps, an even count.
     """
     mat = matrix()
+    scaled = window * WINDOW_SCALE
     steps = pcm.size // 32
     out = np.zeros((steps, SUBBANDS))
     for step in range(steps):
         hop = pcm[step * 32:(step + 1) * 32]
         history = np.concatenate((hop[::-1], history[: WINDOW_TAPS - 32]))
-        windowed = history * window
-        folded = windowed.reshape(8, 64).sum(axis=0)
-        out[step] = mat @ folded
+        folded = (history * scaled).reshape(8, 64).sum(axis=0)
+        values = mat @ folded
+        if step % 2 == 1:
+            values[1::2] = -values[1::2]
+        out[step] = values
     return out, history
 
 
@@ -86,6 +108,19 @@ def mdct(block: np.ndarray) -> np.ndarray:
     taper = np.sin(np.pi / 36.0 * (n + 0.5))
     kernel = np.cos(np.pi / 72.0 * (2 * n + 19)[:, None] * (2 * k + 1)[None, :])
     return (block * taper) @ kernel
+
+
+def antialias_compensation(lines: np.ndarray) -> np.ndarray:
+    """Inverse of the decoder's antialias stage: the transpose of Table B.9."""
+    out = lines.copy()
+    for subband in range(1, SUBBANDS):
+        for index in range(8):
+            lower = ANTIALIAS * subband - 1 - index
+            upper = ANTIALIAS * subband + index
+            below, above = out[lower], out[upper]
+            out[lower] = below * ANTIALIAS_COSINE[index] + above * ANTIALIAS_SINE[index]
+            out[upper] = above * ANTIALIAS_COSINE[index] - below * ANTIALIAS_SINE[index]
+    return out
 
 
 def granule_lines(pcm: np.ndarray, window: np.ndarray, carry: np.ndarray, history: np.ndarray):
@@ -99,15 +134,10 @@ def granule_lines(pcm: np.ndarray, window: np.ndarray, carry: np.ndarray, histor
     for subband in range(SUBBANDS):
         block = np.concatenate((carry[subband], filtered[:, subband]))
         spectrum = mdct(block)
-        if subband % 2 == 1:
-            # Odd subbands are spectrally reversed; undo the reversal and the
-            # half-bin offset that comes with it, then the decoder's own
-            # "frequency inversion" lands the lines where they belong.
-            spectrum = spectrum[::-1].copy()
         lines[subband * LINES_PER_GRANULE:(subband + 1) * LINES_PER_GRANULE] = (
             spectrum / SYNTHESIS_GAIN
         )
-    return lines, filtered.T, history
+    return antialias_compensation(lines), filtered.T, history
 
 
 def sine(freq: int, amplitude: float, count: int) -> np.ndarray:

@@ -69,8 +69,9 @@ for inversion in (True, False):
     results[inversion] = snr
     print(f"  spec, layer3_inversion={inversion!s:5s}: {snr:7.2f} dB  delay {delay}  gain {gain:.5f}")
 
-report = DR.score(DR.shipped_analysis, 0.0, noise=True)
-print(f"  shipped analysis.mbt for reference: {report['snr_db']:7.2f} dB")
+report = DR.score(DR.analysis_model, 0.0, noise=True)
+print(f"  analysis.mbt model, full decoder chain: {report['snr_db']:7.2f} dB "
+      f"(delay {report['delay']})")
 
 # The gate: with the Layer III inversion on, the delivered analysis has to be the
 # inverse of the real decoder. Without it, it must NOT be, which is what proves the

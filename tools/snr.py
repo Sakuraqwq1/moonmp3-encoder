@@ -13,6 +13,7 @@ Usage:
     python tools/snr.py reference.wav candidate.mp3
     python tools/snr.py reference.wav candidate.mp3 --json
     python tools/snr.py reference.wav candidate.wav --max-delay 8192 --trim 1152
+    python tools/snr.py reference.wav candidate.mp3 --delay 1057   # the codec's own delay
 
 SNR is a development metric, not a perceptual quality score. Report the
 reference, decoder, delay and trim alongside it.
@@ -105,7 +106,23 @@ def _channel_metrics(ref: np.ndarray, cand: np.ndarray) -> dict:
     }
 
 
-def measure(reference_path: str, candidate_path: str, max_delay: int = 4096, trim: int = 0) -> dict:
+def measure(
+    reference_path: str,
+    candidate_path: str,
+    max_delay: int = 4096,
+    trim: int = 0,
+    delay: int | None = None,
+) -> dict:
+    """SNR of `candidate_path` against `reference_path`.
+
+    With `delay` set, the candidate is aligned at that exact number of samples
+    instead of by correlation. Use it for the encoder's own streams: its delay is
+    the constant 1057 samples (481 filterbank + 576 half-block overlap), and a
+    correlation search on a periodic probe cannot recover a constant that is
+    already known — the sidelobes of a tone's correlation are almost as tall as
+    the peak, so the search lands on a neighbouring period and reports the
+    alignment error as if it were coding noise.
+    """
     reference, ref_rate = read_audio(reference_path)
     candidate, cand_rate = read_audio(candidate_path)
     if ref_rate != cand_rate:
@@ -115,7 +132,10 @@ def measure(reference_path: str, candidate_path: str, max_delay: int = 4096, tri
             f"channel counts differ: {reference.shape[1]} vs {candidate.shape[1]}; "
             "compare matching mono/stereo outputs"
         )
-    lag, score = best_delay(reference, candidate, max_delay)
+    if delay is None:
+        lag, score = best_delay(reference, candidate, max_delay)
+    else:
+        lag, score = int(delay), 0.0
     aligned_ref, aligned_cand = _align(reference, candidate, lag, trim)
     if aligned_ref.shape[0] == 0:
         raise ToolError("signals do not overlap after delay alignment")
@@ -174,7 +194,8 @@ def print_report(report: dict) -> None:
     )
     print(
         f"alignment : delay={report['delay_samples']} samples "
-        f"({report['delay_ms']:.3f} ms), score={report['correlation_score']:.4f}, "
+        f"({report['delay_ms']:.3f} ms), "
+        f"score={report['correlation_score']:.4f}, "
         f"trim={report['trim_samples']}"
     )
     for channel in report["per_channel"]:
@@ -192,12 +213,18 @@ def main() -> int:
     parser.add_argument("candidate", help="encoded/decoded file, e.g. MP3")
     parser.add_argument("--max-delay", type=int, default=4096, help="search +/- this many samples")
     parser.add_argument("--trim", type=int, default=0, help="discard this many samples at each edge after alignment")
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=None,
+        help="align at this exact lag instead of searching (the encoder's is 1057)",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     args = parser.parse_args()
     if args.max_delay < 0:
         parser.error("--max-delay must be non-negative")
     try:
-        report = measure(args.reference, args.candidate, args.max_delay, args.trim)
+        report = measure(args.reference, args.candidate, args.max_delay, args.trim, args.delay)
     except (ToolError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

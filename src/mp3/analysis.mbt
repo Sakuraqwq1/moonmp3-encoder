@@ -58,16 +58,35 @@ pub fn long_block_window(index : Int32) -> Double {
 }
 
 ///|
-/// Filterbank matrix element `(subband, tap)`: `cos((16 + tap)(2 subband + 1)
+/// Filterbank matrix element `(subband, tap)`: `cos((2 subband + 1)(tap - 16)
 /// pi / 64)`. Precomputing the 32x64 matrix turns the per-step cost into plain
 /// multiplies; without it every step would need 2048 cosines.
+///
+/// `tap - 16` is not a rewriting of `16 + tap`: the two differ by
+/// `(2m + 1) pi / 2`, which is not a multiple of `pi`, so they are different
+/// matrices. `16 + tap` is the *synthesis* matrix; using it on the analysis
+/// side makes the modulation double-sideband, mirrors every odd subband inside
+/// its own band, and leaves the encoder unable to invert the decoder. On white
+/// noise through the verified decoder this form reconstructs at 84 dB and the
+/// synthesis form at 0.01 dB; see docs/handoff-2026-11-02-night.md.
 pub fn matrix_element(subband : Int32, tap : Int32) -> Double {
   @math.cos(
-    (16.0 + tap.to_double()) *
     (2.0 * subband.to_double() + 1.0) *
+    (tap.to_double() - 16.0) *
     (@math.PI / 64.0),
   )
 }
+
+///|
+/// Scale that turns the checked-in `analysis_window` table into the analysis
+/// window of ISO/IEC 11172-3 Table C.1.
+///
+/// `analysis_window` is the *synthesis* table `D`: its peak is 1.144989014, the
+/// value at index 256 that `tools/window_table.py` checks against the upstream
+/// blob. The analysis coefficients are `C = D / 32` (peak 0.035780907), which is
+/// why the window is scaled here instead of the generated table being cut down:
+/// the table stays exactly what its provenance check verifies.
+const AnalysisWindowScale : Double = 0.03125
 
 ///|
 /// State of the 32-band polyphase analysis filterbank for one channel.
@@ -75,12 +94,14 @@ pub fn matrix_element(subband : Int32, tap : Int32) -> Double {
 /// The filterbank is a sliding window: it needs the 512 most recent input
 /// samples, newest first, and shapes each step out of them. `history` is kept
 /// as a plain array and is mutated in place, so the struct itself never has to
-/// be reassigned.
+/// be reassigned; `step` is the one mutable scalar, and only its parity is read.
 pub struct AnalysisFilterbank {
   /// 512 most recent input samples, `history[0]` newest.
   history : Array[Double]
   /// 32x64 matrix of `matrix_element`, row-major by subband.
   matrix : Array[Double]
+  /// Steps taken so far; its parity is the Layer III odd-sample sign.
+  mut step : Int32
 }
 
 ///|
@@ -92,7 +113,11 @@ pub fn AnalysisFilterbank::new() -> AnalysisFilterbank {
       matrix[subband * 64 + tap] = matrix_element(subband, tap)
     }
   }
-  AnalysisFilterbank::{ history: Array::make(WindowTaps, 0.0), matrix, }
+  AnalysisFilterbank::{
+    history: Array::make(WindowTaps, 0.0),
+    matrix,
+    step: 0,
+  }
 }
 
 ///|
@@ -102,7 +127,7 @@ pub fn AnalysisFilterbank::new() -> AnalysisFilterbank {
 /// In matrix form the analysis filterbank is
 ///
 /// ```text
-/// S[m] = sum(n = 0..511) x[n] C[n] cos((16 + n mod 64)(2m + 1) pi / 64)
+/// S[m] = sum(n = 0..511) x[n] C[n] cos((2m + 1)(n mod 64 - 16) pi / 64)
 /// ```
 ///
 /// so this windows the 512-sample history, sums the eight 64-sample blocks
@@ -111,6 +136,14 @@ pub fn AnalysisFilterbank::new() -> AnalysisFilterbank {
 /// that folding is only an optimisation of this sum, and a wrong one produces
 /// an encoder that runs, decodes and leaks four decibels into every
 /// neighbouring band, so the sum is written out directly here.
+///
+/// Layer III orientation: a real-valued filterbank samples band `m` with a
+/// carrier at the band edge, so the raw sum has the odd bands mirrored inside
+/// themselves. The decoder undoes that after its inverse MDCT (minimp3's
+/// `L3_change_sign`, ISO 11172-3 §2.4.2.3); the encoder has to apply the same
+/// `(-1)^n` to odd bands before the MDCT, or the mirror survives the round trip.
+/// Measured through the verified decoder: with the flip 84 dB, without it 1.2
+/// dB, so this is load-bearing and not a cosmetic sign convention.
 pub fn AnalysisFilterbank::step(
   self : AnalysisFilterbank,
   samples : Array[Double],
@@ -129,7 +162,8 @@ pub fn AnalysisFilterbank::step(
   for block = 0; block < 8; block = block + 1 {
     for offset = 0; offset < 64; offset = offset + 1 {
       let index = block * 64 + offset
-      summed[offset] = summed[offset] + history[index] * analysis_window[index]
+      summed[offset] = summed[offset] +
+        history[index] * analysis_window[index] * AnalysisWindowScale
     }
   }
   let subbands = Array::make(SubbandCount, 0.0)
@@ -140,6 +174,12 @@ pub fn AnalysisFilterbank::step(
     }
     subbands[subband] = sum
   }
+  if self.step % 2 == 1 {
+    for subband = 1; subband < SubbandCount; subband = subband + 2 {
+      subbands[subband] = -subbands[subband]
+    }
+  }
+  self.step = self.step + 1
   subbands
 }
 
@@ -179,17 +219,20 @@ pub fn mdct_long(block : Array[Double]) -> Array[Double] raise AnalysisError {
 ///|
 /// Gain the decoder's synthesis applies to the lines an encoder writes.
 ///
-/// The untransposed inverse MDCT sums 18 cosine terms, which scales a block by
-/// `18 / 2 = 9`, and the synthesis filterbank oversamples each subband by 32, so
-/// a coefficient of 1.0 anywhere in the spectrum comes back as a 288 times
-/// larger sample stream. Dividing the analysis output by that is what puts the
-/// encoder's lines on the same scale as the `xr` values §2.4.2.7 requantises, and
-/// it is why one unit coefficient at `global_gain = 210` decodes to a peak of
-/// about 1.0. Measured against libsndfile over 100 Hz..8 kHz, the ratio of
-/// decoded RMS to input RMS is 294.7..301.2 for the count1 slice, i.e. within
-/// 3 % of this constant; the remaining spread is the one-bit quantiser's, not
-/// the filterbank's.
-pub const SynthesisGain : Double = 288.0
+/// The decoder's inverse MDCT is the untransposed kernel of `mdct_long`, and
+/// overlap-adding consecutive blocks scales a subband sample by `36 / 4 = 9`
+/// (the `N / 4` of a sine-windowed MDCT pair). The synthesis filterbank itself is
+/// unity gain for the subband stream it is given, so a line coefficient of 1.0
+/// comes back as a 9 times larger sample stream.
+///
+/// Dividing the analysis output by that is what puts the encoder's lines on the
+/// scale of the `xr` values §2.4.2.7 requantises, and it is why one unit
+/// coefficient at `global_gain = 210` decodes to a peak near 1.0. Measured on
+/// white noise against the verified decoder (`tools/decoder_ref.py --score
+/// --noise`): the fitted gain is 1.00000 at 84 dB with this constant, and 32
+/// times off without it, because the analysis window is `D / 32` (Table C.1)
+/// while the lines have to land in the synthesis units of Table D.
+pub const SynthesisGain : Double = 9.0
 
 ///|
 /// One channel of long-block analysis: the filterbank plus the 18 subband
@@ -218,7 +261,9 @@ pub fn ChannelAnalysis::new() -> ChannelAnalysis {
 /// The 18 samples of the previous granule are prepended, so consecutive
 /// granules overlap by half a block exactly as §2.4.2.2 requires. The result is
 /// divided by `SynthesisGain`, so the lines are already in the units the
-/// decoder's requantisation expects.
+/// decoder's requantisation expects, and then run through
+/// `antialias_compensation`, which is the inverse of the stage the decoder runs
+/// before its inverse MDCT.
 pub fn ChannelAnalysis::granule(
   self : ChannelAnalysis,
   pcm : Array[Double],
@@ -246,12 +291,10 @@ pub fn ChannelAnalysis::granule(
     }
     let spectrum = mdct_long(block)
     for line = 0; line < LongBlockLines; line = line + 1 {
-      lines[subband * LongBlockLines + line] = odd_band_value(
-          spectrum, subband, line,
-        ) /
-        SynthesisGain
+      lines[subband * LongBlockLines + line] = spectrum[line] / SynthesisGain
     }
   }
+  antialias_compensation(lines)
   for index = 0; index < fresh.length(); index = index + 1 {
     self.carry[index] = fresh[index]
   }
@@ -272,29 +315,46 @@ pub fn peak_absolute(values : Array[Double]) -> Double {
 }
 
 ///|
-/// One output line of a subband, after the pseudo-QMF reversal fix-up.
+/// ISO/IEC 11172-3 Table B.9: the cosine and sine of the eight antialias
+/// rotations the decoder applies to the boundary lines of adjacent subbands.
+let antialias_cosine : Array[Double] = [
+  0.857493, 0.881742, 0.949629, 0.983315, 0.995518, 0.999161, 0.999899, 0.999993,
+]
+
+///|
+/// ISO/IEC 11172-3 Table B.9: the sine terms of the same eight rotations.
+let antialias_sine : Array[Double] = [
+  -0.514496, -0.471732, -0.313377, -0.181913, -0.094574, -0.040966, -0.014199, -0.003700,
+]
+
+///|
+/// Inverse of the decoder's antialias stage, applied to the lines of one granule.
 ///
-/// The analysis filterbank is a pseudo-QMF: every odd subband comes out
-/// spectrally reversed inside its band. A 440 Hz tone in subband 0 lands where
-/// it belongs, but the same tone in subband 1 lands at bin 10 instead of 8, and
-/// 8000 Hz in subband 11 lands at bin 7 instead of 11. Real encoders inherit the
-/// right orientation from the folding form of the filterbank; with the direct
-/// sum it has to be undone explicitly.
+/// Before its inverse MDCT, the decoder rotates the top eight lines of every
+/// subband together with the bottom eight of the next one (§2.4.2.3, the
+/// "antialias" butterflies of Table B.9). That stage is normative, so every
+/// decoder applies it; an analysis that produces the decoder's subband stream
+/// exactly, and therefore its lines exactly, would have those lines rotated on
+/// the way out and lose the band boundaries. The encoder's job is the inverse
+/// rotation, which is the transpose here because each butterfly is orthogonal.
 ///
-/// The map is measured, not reasoned: `tools/odd_band.py` installs each
-/// candidate, re-encodes a 1000 Hz and an 8000 Hz tone (both odd subbands) and
-/// scores them against the decoder. A plain reversal wins; adding the half-bin
-/// sign alternation that the reversed modulation seems to suggest still decodes
-/// at the right frequency but drops the waveform from 16 dB to -1.5 dB, because
-/// the alternation rotates the phase by half a line. Measured on 2026-11-02:
-/// identity -2.8 dB, reverse + half-bin -1.7 dB, plain reversal +16.0 dB.
-fn odd_band_value(
-  spectrum : Array[Double],
-  subband : Int32,
-  line : Int32,
-) -> Double {
-  if subband % 2 == 0 {
-    return spectrum[line]
+/// This one is easy to forget because it is invisible in the subband domain.
+/// Measured through the verified decoder on white noise with no quantisation:
+/// without this stage 11.55 dB, with it 84.47 dB, at the same 1057-sample delay
+/// and the same fitted gain of 1.00000 — the whole difference is the band edges,
+/// which is why a filterbank that scores 84 dB at 440 Hz can still score 11 dB
+/// against the real decoder.
+fn antialias_compensation(lines : Array[Double]) -> Unit {
+  for subband = 1; subband < SubbandCount; subband = subband + 1 {
+    for index = 0; index < 8; index = index + 1 {
+      let lower = 18 * subband - 1 - index
+      let upper = 18 * subband + index
+      let below = lines[lower]
+      let above = lines[upper]
+      lines[lower] = below * antialias_cosine[index] +
+        above * antialias_sine[index]
+      lines[upper] = above * antialias_cosine[index] -
+        below * antialias_sine[index]
+    }
   }
-  spectrum[17 - line]
 }
