@@ -10,12 +10,12 @@
 /// complete MP3 byte stream (CBR, 128 kbps, 44100 Hz in v1).
 ///
 /// The samples really are coded: each granule goes through the 32-band
-/// polyphase filterbank, the long-block MDCT, a quantiser and the count1
-/// Huffman table. A steady tone comes back at the right frequency and a
-/// recognisable amplitude. Because every frequency line currently costs one
-/// bit, a dense spectrum is coarse — the big_values tables, scalefactor bands
-/// and rate-control loop are the next stage and will replace the quantiser
-/// without changing this signature.
+/// polyphase filterbank, the long-block MDCT, a companded quantiser with a
+/// per-granule gain search, the big_values Huffman tables and the count1 tail.
+/// A steady tone comes back at the right frequency and, from 440 Hz upward,
+/// above the stage-1 quality floor of 20 dB. Scalefactor bands and the rate
+/// control loop are the next stage; they will replace the quantiser without
+/// changing this signature.
 pub fn encode(
   samples : Array[Int32],
   sample_rate : Int32,

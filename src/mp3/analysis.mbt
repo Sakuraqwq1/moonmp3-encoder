@@ -246,21 +246,10 @@ pub fn ChannelAnalysis::granule(
     }
     let spectrum = mdct_long(block)
     for line = 0; line < LongBlockLines; line = line + 1 {
-      // An odd subband comes out of the analysis filterbank spectrally reversed
-      // about its centre: a 1000 Hz tone lands near bin 10 of subband 1 where it
-      // belongs at bin 8. Reversing the 18 bins and alternating the sign — the
-      // half-bin offset the reversed modulation introduces — puts the tone where
-      // the decoder's (unreversed) synthesis expects it. Without this a 1000 Hz
-      // input decodes as 1077 Hz. ISO 11172-3 describes the same correction from
-      // the decoder's side as "frequency inversion".
-      let mut value = spectrum[line]
-      if subband % 2 == 1 {
-        value = spectrum[LongBlockLines - 1 - line]
-        if line % 2 == 1 {
-          value = -value
-        }
-      }
-      lines[subband * LongBlockLines + line] = value / SynthesisGain
+      lines[subband * LongBlockLines + line] = odd_band_value(
+          spectrum, subband, line,
+        ) /
+        SynthesisGain
     }
   }
   for index = 0; index < fresh.length(); index = index + 1 {
@@ -280,4 +269,32 @@ pub fn peak_absolute(values : Array[Double]) -> Double {
     }
   }
   peak
+}
+
+///|
+/// One output line of a subband, after the pseudo-QMF reversal fix-up.
+///
+/// The analysis filterbank is a pseudo-QMF: every odd subband comes out
+/// spectrally reversed inside its band. A 440 Hz tone in subband 0 lands where
+/// it belongs, but the same tone in subband 1 lands at bin 10 instead of 8, and
+/// 8000 Hz in subband 11 lands at bin 7 instead of 11. Real encoders inherit the
+/// right orientation from the folding form of the filterbank; with the direct
+/// sum it has to be undone explicitly.
+///
+/// The map is measured, not reasoned: `tools/odd_band.py` installs each
+/// candidate, re-encodes a 1000 Hz and an 8000 Hz tone (both odd subbands) and
+/// scores them against the decoder. A plain reversal wins; adding the half-bin
+/// sign alternation that the reversed modulation seems to suggest still decodes
+/// at the right frequency but drops the waveform from 16 dB to -1.5 dB, because
+/// the alternation rotates the phase by half a line. Measured on 2026-11-03:
+/// identity -2.8 dB, reverse + half-bin -1.7 dB, plain reversal +16.0 dB.
+fn odd_band_value(
+  spectrum : Array[Double],
+  subband : Int32,
+  line : Int32,
+) -> Double {
+  if subband % 2 == 0 {
+    return spectrum[line]
+  }
+  spectrum[17 - line]
 }

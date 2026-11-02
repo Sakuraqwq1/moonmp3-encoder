@@ -344,11 +344,38 @@ class AnalysisTests(unittest.TestCase):
             for granule in frame["side_info"]["granules"]:
                 self.assertGreaterEqual(granule["global_gain"], 0)
                 self.assertLessEqual(granule["global_gain"], 255)
-                self.assertEqual(granule["big_values"], 0)
+                # big_values counts pairs, so it is even and cannot exceed 288.
+                self.assertEqual(granule["big_values"] % 2, 0)
+                self.assertLessEqual(granule["big_values"], 288)
                 self.assertEqual(granule["count1table_select"], 1)
-                # 576 mask bits plus at most one sign bit per coefficient.
+                # Every MPEG-1 table reaches at most 15 and uses no escapes.
+                for table in granule["table_select"]:
+                    self.assertTrue(table in (0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15), table)
+                # At least the 576 count1 mask bits have to be paid for.
                 self.assertGreaterEqual(granule["part2_3_length"], 576)
-                self.assertLessEqual(granule["part2_3_length"], 1152)
+                self.assertLessEqual(granule["part2_3_length"], 1584)
+
+    def test_big_values_lifts_the_sine_above_twenty_db(self):
+        # The stage-1 quality floor: a steady tone has to decode at its own
+        # frequency and at least 20 dB above the quantisation noise.
+        import snr
+
+        frames = 39
+        payload = mp3lab.extract_payload(mp3lab.run_cli("sine", str(frames), "440", "50", "1"))
+        count = frames * 1152
+        index = np.arange(count)
+        reference = np.round(0.5 * 32767 * np.sin(2 * np.pi * 440 * index / 44100.0))
+        with tempfile.TemporaryDirectory(prefix="moonmp3-bv-") as folder:
+            reference_path = os.path.join(folder, "ref.wav")
+            candidate_path = os.path.join(folder, "cand.mp3")
+            import soundfile as sf
+
+            sf.write(reference_path, reference.astype(np.int16), 44100, subtype="PCM_16")
+            with open(candidate_path, "wb") as handle:
+                handle.write(payload)
+            report = snr.measure(reference_path, candidate_path)
+        self.assertGreaterEqual(report["overall_snr_db"], 20.0)
+        self.assertGreaterEqual(report["per_channel"][0]["correlation"], 0.99)
 
 
 class CliTests(unittest.TestCase):

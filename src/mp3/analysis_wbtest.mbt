@@ -199,23 +199,145 @@ test "granule : a steady tone concentrates in its own subband" {
 }
 
 ///|
-test "quantiser : a tone becomes unit coefficients and a gain" {
+test "quantiser : the peak lands on the top level available" {
   let lines = Array::make(576, 0.0)
   lines[12] = 8.0
   lines[13] = -4.0
-  lines[14] = 1.0
-  let (gain, quantized) = quantize_count1(lines) catch {
-    (_ : QuantizeError) => {
+  lines[14] = 0.25
+  let peak = peak_absolute(lines)
+  let gain = global_gain_for_peak(peak, MaxQuantLevel)
+  // 210 + 4 log2(8 / 15^(4/3)) = 210 - 8.83, i.e. 201.
+  assert_eq(gain, 201)
+  let values = quantize_with_gain(lines, gain)
+  // The companded peak has to reach the top level, and the half-amplitude line
+  // has to keep its relative scale instead of collapsing to +-1.
+  assert_eq(values[12], 15)
+  assert_true(values[13] < -6 && values[13] > -12)
+  assert_eq(values[13] < 0, true)
+  assert_true(values[14] >= 0)
+  // Nothing may exceed what an MPEG-1 table can carry.
+  for index = 0; index < 576; index = index + 1 {
+    assert_true(values[index].abs() <= MaxQuantLevel)
+  }
+}
+
+///|
+test "quantiser : raising the gain only ever shrinks coefficients" {
+  let lines = Array::make(576, 0.0)
+  for index = 0; index < 576; index = index + 1 {
+    lines[index] = @math.sin(index.to_double() * 0.37) * 6.0
+  }
+  let mut previous = quantize_with_gain(lines, 190)
+  for gain = 191; gain < 196; gain = gain + 1 {
+    let current = quantize_with_gain(lines, gain)
+    for index = 0; index < 576; index = index + 1 {
+      assert_true(current[index].abs() <= previous[index].abs())
+    }
+    previous = current
+  }
+}
+
+///|
+test "huffman : the tables are the ones the standard defines" {
+  // Extents per ISO/IEC 11172-3 Table B.7: 1, 2, 2, -, 3, 3, 5, 5, 5, 7, 7, 7,
+  // 15, -, 15. Table 0 encodes only zeros, 4 and 14 do not exist.
+  assert_eq(huffman_table_extent[0], 0)
+  assert_eq(huffman_table_extent[4], 0)
+  assert_eq(huffman_table_extent[14], 0)
+  assert_eq(huffman_table_extent[1], 1)
+  assert_eq(huffman_table_extent[2], 2)
+  assert_eq(huffman_table_extent[3], 2)
+  assert_eq(huffman_table_extent[5], 3)
+  assert_eq(huffman_table_extent[9], 5)
+  assert_eq(huffman_table_extent[12], 7)
+  assert_eq(huffman_table_extent[13], 15)
+  assert_eq(huffman_table_extent[15], 15)
+  // No MPEG-1 table uses escapes.
+  for table = 0; table <= 15; table = table + 1 {
+    assert_eq(table_linbits(table), 0)
+  }
+}
+
+///|
+test "huffman : known code words are bit-exact" {
+  // Table 1 has four leaves: (0,0) is one bit, (1,0) is two bits, and (0,1) and
+  // (1,1) are three. Pinning these four is what locks the transcription, and the
+  // end-to-end decoder test is what proves the numbers are the standard's.
+  assert_eq(pair_cost(1, 0, 0), 1)
+  assert_eq(pair_cost(1, 1, 0), 3)
+  assert_eq(pair_cost(1, 0, 1), 4)
+  assert_eq(pair_cost(1, 1, 1), 5)
+  // (1, 0) is code 01 with one positive sign bit: 010 in the top of the byte.
+  let w = @bits.BitWriter::new()
+  let bits = write_pair(w, 1, 1, 0) catch {
+    (_ : HuffmanError) => {
       assert_true(false)
       return
     }
   }
-  // 210 + 4 log2(8) = 222.
-  assert_eq(gain, 222)
-  assert_eq(quantized[12], 1)
-  assert_eq(quantized[13], -1)
-  // 1.0 is a quarter of the peak, so it falls under the half-peak cut-off.
-  assert_eq(quantized[14], 0)
-  assert_eq(count1_nonzero(quantized), 2)
-  assert_eq(count1_cost(quantized), 576 + 2)
+  assert_eq(bits, 3)
+  let bytes = w.finish()
+  assert_eq(bytes[0].to_int(), 0b01000000)
+  // (0, 0) is the single bit 1.
+  let u = @bits.BitWriter::new()
+  let _ = write_pair(u, 1, 0, 0) catch {
+    (_ : HuffmanError) => {
+      assert_true(false)
+      return
+    }
+  }
+  assert_eq(u.finish()[0].to_int(), 0b10000000)
+}
+
+///|
+test "huffman : big_values covers every coefficient above one" {
+  let values = Array::make(576, 0)
+  values[0] = 3
+  values[5] = -1
+  // The last "big" coefficient is at index 0, so one pair is enough and the
+  // +-1 at index 5 stays in the count1 tail.
+  assert_eq(big_values_needed(values), 2)
+  values[9] = 2
+  // Index 9 needs 5 pairs, rounded up to a quad boundary.
+  assert_eq(big_values_needed(values), 6)
+  let zeros = Array::make(576, 0)
+  assert_eq(big_values_needed(zeros), 0)
+}
+
+///|
+test "huffman : table selection respects the extents" {
+  let values = Array::make(576, 0)
+  values[0] = 1
+  values[1] = 2
+  // A pair of (1, 2) needs a table that reaches 2.
+  let table = choose_table(values, 2)
+  assert_true(table >= 2)
+  assert_true(table_extent(table) >= 2)
+  // Costs must agree with what the writer emits.
+  let w = @bits.BitWriter::new()
+  let written = write_granule(w, values, table, 2) catch {
+    (_ : HuffmanError) => {
+      assert_true(false)
+      return
+    }
+  }
+  assert_eq(written, granule_cost(values, table, 2))
+}
+
+///|
+test "huffman : a coefficient past the largest extent cannot be coded" {
+  let values = Array::make(576, 0)
+  values[0] = 15
+  values[1] = 15
+  // No MPEG-1 table escapes, so 15 is the cap and (15, 15) must still fit.
+  assert_eq(choose_table(values, 2) >= 13, true)
+  let w = @bits.BitWriter::new()
+  let table = choose_table(values, 2)
+  let written = write_granule(w, values, table, 2) catch {
+    (_ : HuffmanError) => {
+      assert_true(false)
+      return
+    }
+  }
+  assert_eq(written, granule_cost(values, table, 2))
 }

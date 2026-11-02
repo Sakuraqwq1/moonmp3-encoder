@@ -115,7 +115,32 @@ python tools/window_table.py --write     # 重新生成 src/mp3/window.mbt
 上游文件固定在 `hajimehoshi/go-mp3` 的 blob `3532e6c5…`，整文件 SHA-256 与 512 系数表
 的 SHA-256 都记录在 `docs/provenance.md`。缓存落在 `target/ref/`，不提交。
 
-## 7. 解析 MP3 帧
+## 7. Huffman 表来源校验
+
+```bash
+python tools/huffman_tables.py --report   # 校验并汇总 15 张 big_values 表
+python tools/huffman_tables.py --write    # 重新生成 src/mp3/huffman_tables.mbt
+python tools/huffman_tables.py --fetch    # 重新拉取上游（需要网络）
+```
+
+上游文件固定在 `hajimehoshi/go-mp3` 的 blob `abc30058…`。脚本从解码侧二叉树展开出
+编码侧 `(x,y) -> (码长, 码字)`，并在写出前校验 Kraft 和、码字冲突与表尺寸；展开结果
+的 SHA-256 与实测的每张表 extent/最大码长都记录在 `docs/provenance.md`。
+
+## 8. 奇数子带映射实测
+
+```bash
+python tools/odd_band.py            # 逐个候选映射实测 SNR，报告最优
+python tools/odd_band.py --report   # 只测当前检入的那一版
+```
+
+分析滤波器组是伪 QMF，奇数子带在带内是频谱反的。把这个反向修正回来有多种候选
+（identity / 纯倒序 / 倒序加变号 / 倒序 18-k 等），它们在"解码频率对不对"上分不出来，
+只有 SNR 能分——这一步就是量它。脚本会把候选写进 `analysis.mbt` 的
+`odd_band_value`、重编、解码、打分，结束后恢复原样。当前最优：**纯倒序**（+16 dB，
+而"倒序 + 交替变号"是 −1.7 dB）。
+
+## 9. 解析 MP3 帧
 
 ```bash
 python tools/mp3dump.py target/ours-silent.mp3 --first 2 --verbose
@@ -132,7 +157,7 @@ python tools/mp3dump.py target/ours-silent.mp3 --strict
 
 阶段 1 调试时，优先让 `--strict` 零 warning，再判断声音是否正确。
 
-## 8. 结构验证
+## 10. 结构验证
 
 ```bash
 python tools/verify.py structure
@@ -142,7 +167,7 @@ python tools/verify.py structure
 
 阶段 1 增加真实音频后，保留这个命令作为回归门禁；新增音频用例另加命令，不要削弱现有检查。
 
-## 9. SNR 测量
+## 11. SNR 测量
 
 ```bash
 python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.wav
@@ -165,7 +190,7 @@ python tools/snr.py target/fixtures/sine440_mono_1s.wav decoded.mp3 --trim 1152
 - SNR 不是感知音质指标。阶段 2 的门槛是工程判据，不替代主观试听。
 - 报告时应同时给出参考文件、解码器、延迟和 trim，不能只报一个数字。
 
-## 10. 频谱检查
+## 12. 频谱检查
 
 ```bash
 python tools/spectrum.py target/fixtures/sine440_mono_1s.wav
@@ -182,7 +207,7 @@ python tools/spectrum.py decoded.mp3 --json
 
 4096 点 FFT 的频率分辨率约 10.8 Hz，插值后正弦峰值误差通常在 ±1 Hz 内。频谱不是音质评分，仍以 SNR 和试听为补充。
 
-## 11. 工具自测
+## 13. 工具自测
 
 ```bash
 python tools/selftest.py
@@ -202,7 +227,7 @@ python tools/selftest.py
 
 工具改动后必须先跑这个命令，再动编码器。
 
-## 12. 发布前检查
+## 14. 发布前检查
 
 ```bash
 python tools/check_release.py
@@ -220,7 +245,7 @@ python tools/check_release.py --json
 
 它不替代构建和测试，只负责抓住“版本号漏改一处”这类发布事故。
 
-## 13. 一次完整的本地检查
+## 15. 一次完整的本地检查
 
 ```bash
 moon fmt --check

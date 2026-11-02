@@ -16,6 +16,8 @@ pub const FrameSamples : Int32 = 1152
 
 pub const GranulePcm : Int32 = 576
 
+pub const HuffmanSymbols : Int32 = 256
+
 pub const LinesPerGranule : Int32 = 18
 
 pub const LinesPerGranuleCount : Int32 = 576
@@ -23,6 +25,8 @@ pub const LinesPerGranuleCount : Int32 = 576
 pub const LongBlockLines : Int32 = 18
 
 pub const LongBlockSamples : Int32 = 36
+
+pub const MaxQuantLevel : Int32 = 15
 
 pub const ModeMono : Int32 = 3
 
@@ -42,9 +46,13 @@ pub const SynthesisGain : Double = 288.0
 
 pub const WindowTaps : Int32 = 512
 
-pub fn count1_bits(Array[Int32]) -> Int32 raise Count1Error
+pub fn big_values_cost(Array[Int32], Int32, Int32) -> Int32
 
-pub fn count1_cost(Array[Int32]) -> Int32
+pub fn big_values_needed(Array[Int32]) -> Int32
+
+pub fn choose_table(Array[Int32], Int32) -> Int32
+
+pub fn count1_bits(Array[Int32]) -> Int32 raise Count1Error
 
 pub fn count1_nonzero(Array[Int32]) -> Int32
 
@@ -52,7 +60,9 @@ pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise EncodeError
 
 pub fn encode_count1_spectrum(Int32, Int32, Array[Int32], Int32) -> Bytes raise Count1Error
 
-pub fn global_gain_for_peak(Double) -> Int32
+pub fn global_gain_for_peak(Double, Int32) -> Int32
+
+pub fn granule_cost(Array[Int32], Int32, Int32) -> Int32
 
 pub fn long_block_window(Int32) -> Double
 
@@ -60,15 +70,25 @@ pub fn matrix_element(Int32, Int32) -> Double
 
 pub fn mdct_long(Array[Double]) -> Array[Double] raise AnalysisError
 
+pub fn pair_cost(Int32, Int32, Int32) -> Int32
+
 pub fn peak_absolute(Array[Double]) -> Double
 
-pub fn quantize_count1(Array[Double]) -> (Int32, Array[Int32]) raise QuantizeError
+pub fn quantize_with_gain(Array[Double], Int32) -> Array[Int32]
 
-pub fn quantize_count1_fitting(Array[Double], Int32) -> (Int32, Array[Int32]) raise QuantizeError
+pub fn region_peak(Array[Int32], Int32, Int32) -> Int32
+
+pub fn table_extent(Int32) -> Int32
+
+pub fn table_linbits(Int32) -> Int32
 
 pub fn write_count1(@bits.BitWriter, Array[Int32]) -> Int32 raise Count1Error
 
+pub fn write_granule(@bits.BitWriter, Array[Int32], Int32, Int32) -> Int32 raise HuffmanError
+
 pub fn write_header(@bits.BitWriter, Int32, Int32, Int32, Int32) -> Unit
+
+pub fn write_pair(@bits.BitWriter, Int32, Int32, Int32) -> Int32 raise HuffmanError
 
 pub fn write_side_info(@bits.BitWriter, Int32, Int32, Array[Int32], Array[GranuleInfo]) -> Unit
 
@@ -94,11 +114,12 @@ pub suberror EncodeError {
   NotInterleaved(Int32)
   EmptyInput
   AnalysisFailed(Int32)
-  QuantizationFailed(Int32)
+  HuffmanFailed(Int32)
 }
 
-pub suberror QuantizeError {
-  BadLineCount(Int32)
+pub suberror HuffmanError {
+  Unrepresentable(Int32)
+  BadRegion(Int32)
 }
 
 // Types and methods
@@ -147,8 +168,17 @@ pub(all) struct GranuleInfo {
   scalefac_scale : Int32
   count1table_select : Int32
 }
+pub fn GranuleInfo::big_values(Int32, Int32, Int32, Int32) -> Self
 pub fn GranuleInfo::count1(Int32, Int32) -> Self
 pub fn GranuleInfo::silent() -> Self
+
+pub struct GranuleQuantiser {
+  powers : Array[Double]
+  lines : Array[Double]
+}
+pub fn GranuleQuantiser::error(Self, Array[Int32], Int32) -> Double
+pub fn GranuleQuantiser::new(Array[Double]) -> Self
+pub fn GranuleQuantiser::quantise(Self, Int32) -> Array[Int32]
 
 // Type aliases
 

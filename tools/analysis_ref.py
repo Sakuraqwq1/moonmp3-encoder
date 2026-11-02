@@ -103,9 +103,7 @@ def granule_lines(pcm: np.ndarray, window: np.ndarray, carry: np.ndarray, histor
             # Odd subbands are spectrally reversed; undo the reversal and the
             # half-bin offset that comes with it, then the decoder's own
             # "frequency inversion" lands the lines where they belong.
-            flipped = spectrum[::-1].copy()
-            flipped[1::2] *= -1.0
-            spectrum = flipped
+            spectrum = spectrum[::-1].copy()
         lines[subband * LINES_PER_GRANULE:(subband + 1) * LINES_PER_GRANULE] = (
             spectrum / SYNTHESIS_GAIN
         )

@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
-> 状态：**阶段 1 进行中（首个可听链路已打通）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT 与 count1 Huffman 量化已就绪，真实 PCM 会产生可解码、频率正确的声音。big_values 表、scalefactor band 与码率控制尚未落地，因此宽带素材的音质仍然很粗。
+> 状态：**阶段 1 收尾中（真实量化已接入）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT、big_values + count1 Huffman、`global_gain` 搜索都已就绪，440 Hz 正弦的 SNR 从 10.06 dB 提升到 **21.73 dB**。仍缺 scalefactor band 与逐带步长，且带边缘的音（如 660 Hz）明显偏低，详见 `docs/stage1-progress.md`。
 
 ## 为什么需要它
 
@@ -31,7 +31,7 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
-> 当前是阶段 1 的中间状态：PCM 真的被编码了，稳态音调的主频正确、幅度可辨认，但每条频率线只有一位（`big_values = 0`，全部落在 count1 区），所以宽带素材、瞬态和满幅信号还很粗。要用于真实音频导出，请等 big_values 与 scalefactor 落地。
+> 当前是阶段 1 的中间状态：稳态音调主频正确、SNR 过 20 dB 门槛（440 Hz 22.06 dB@满幅），但还没有 scalefactor band，带边缘的音质明显偏低，满幅输入有轻微削波。要用于真实音频导出，请等 scalefactor 与码率控制落地。
 
 ## 验证方式
 
@@ -41,7 +41,9 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
 - `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。
 - `tools/probe_lines.py` 逐条激励频线并测量解码后的频率，产出 `docs/line-frequencies.md` 那张映射表。
-- `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对。
+- `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对（残差 1e-16）。
+- `tools/huffman_tables.py` 校验 15 张 big_values 表（Kraft 和、码字冲突、表尺寸）。
+- `tools/odd_band.py` 实测奇数子带的映射，用 SNR 而不是"频率对不对"来选。
 - `tools/snr.py` 自动搜索解码延迟，测量逐声道和整体 SNR。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
 - `tools/selftest.py` 验证上述工具本身没有回归。

@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0.
 
 // The public entry point. Frame layout, side information and CBR sizing are the
-// stable 0.1.x assets; the payload that used to be zero is now a real
-// PCM -> filterbank -> MDCT -> count1 chain.
+// stable 0.1.x assets; the payload is a real
+// PCM -> filterbank -> MDCT -> quantiser -> big_values/count1 chain.
 
 ///|
 /// Failures the encoder can report.
@@ -19,24 +19,101 @@ pub suberror EncodeError {
   EmptyInput
   /// A granule could not be analysed (internal length invariant broken).
   AnalysisFailed(Int32)
-  /// A granule could not be quantised (internal length invariant broken).
-  QuantizationFailed(Int32)
+  /// A granule could not be Huffman coded within the frame.
+  HuffmanFailed(Int32)
+}
+
+///|
+/// One granule, quantised and priced.
+priv struct GranulePlan {
+  values : Array[Int32]
+  table : Int32
+  big_values : Int32
+  gain : Int32
+  cost : Int32
+}
+
+///|
+/// Quantise one granule for a given gain and price it exactly.
+fn plan_granule(lines : Array[Double], gain : Int32) -> GranulePlan {
+  let values = quantize_with_gain(lines, gain)
+  let big = big_values_needed(values)
+  let table = choose_table(values, big)
+  let cost = granule_cost(values, table, big)
+  GranulePlan::{ values, table, big_values: big, gain, cost, }
+}
+
+///|
+/// Smallest gain whose exact bit cost fits `budget`.
+///
+/// Cost falls as the gain rises (coefficients get smaller, then zero), so a
+/// binary search over the 8-bit field finds the least coarsening that fits. The
+/// search always terminates on a fitting gain because a fully zeroed granule
+/// costs 576 bits and every granule's share is larger than that.
+fn plan_with_budget(lines : Array[Double], budget : Int32) -> GranulePlan {
+  let peak = peak_absolute(lines)
+  if peak <= 0.0 {
+    return plan_granule(lines, 0)
+  }
+  let quantiser = GranuleQuantiser::new(lines)
+  // The gain that puts the peak on the top level is the natural starting point,
+  // but it is not always the best one: rounding the gain to an integer can leave
+  // the loudest lines between levels. Scan a window around it and keep the
+  // candidate with the smallest reconstruction error that still fits the budget.
+  let centre = global_gain_for_peak(peak, MaxQuantLevel)
+  let mut best = plan_granule(lines, centre)
+  let mut best_error = quantiser.error(best.values, best.gain)
+  for offset = 0; offset <= 6; offset = offset + 1 {
+    if offset == 0 {
+      continue
+    }
+    let gain = centre + offset
+    if gain < 0 || gain > 255 {
+      continue
+    }
+    let values = quantiser.quantise(gain)
+    let big = big_values_needed(values)
+    let table = choose_table(values, big)
+    let cost = granule_cost(values, table, big)
+    if cost < 0 || cost > budget {
+      continue
+    }
+    let error = quantiser.error(values, gain)
+    if error < best_error {
+      best = GranulePlan::{ values, table, big_values: big, gain, cost, }
+      best_error = error
+    }
+  }
+  if best.cost <= budget {
+    return best
+  }
+  // Nothing in the window fitted; coarsen until it does. A fully zeroed granule
+  // costs 576 bits, which every granule's share exceeds, so this terminates.
+  let mut low = centre
+  let mut high = 255
+  while low < high {
+    let mid = (low + high) / 2
+    if plan_granule(lines, mid).cost <= budget {
+      high = mid
+    } else {
+      low = mid + 1
+    }
+  }
+  plan_granule(lines, low)
 }
 
 ///|
 /// Encode interleaved signed 16-bit PCM as an MPEG-1 Layer III stream.
 ///
 /// Each granule is analysed with the 32-band polyphase filterbank and the
-/// 36-point long-block MDCT, quantised to the count1 range (-1/0/1) and written
-/// with the count1 Huffman table. `big_values` is therefore always zero and no
-/// scalefactors are transmitted: the whole granule is a unit-coefficient sparse
-/// spectrum plus one `global_gain`.
+/// 36-point long-block MDCT, quantised to the magnitudes MPEG-1 tables can carry
+/// and written as a big_values region plus a count1 tail. No scalefactors are
+/// transmitted yet: one `global_gain` sets the scale for the whole granule.
 ///
-/// This is the first audible stage, not the final quality stage. A steady tone
-/// comes out at the right frequency and a recognisable amplitude; broadband
-/// material is coarse, because one bit per line cannot carry a dense spectrum.
-/// The big_values tables, scalefactor bands and the rate-control loop replace it
-/// later without touching this frame layout.
+/// This is the stage where the encoder stops approximating every line with a
+/// single bit. A steady tone now decodes with a recognisable amplitude envelope
+/// and a signal-to-noise ratio in the low twenties, which is what stage 1 of
+/// `docs/stage1-handoff.md` asks for; per-band scalefactors are the next step.
 pub fn encode(
   samples : Array[Int32],
   sample_rate : Int32,
@@ -68,12 +145,10 @@ pub fn encode(
   for frame = 0; frame < nframes; frame = frame + 1 {
     let size = sizer.next_frame_size()
     let padding = sizer.padding_of(size)
-    // Each granule gets an equal share of the frame's main-data budget. Without
-    // it a dense stereo spectrum would overrun the frame and the stream would
-    // stop parsing, which is exactly the failure this encoder must not have.
-    let budget_per_granule = (size * 8 - 32 - side_bits) / (2 * channels)
-    let nonzero_limit = budget_per_granule - LinesPerGranuleCount
-    let payloads : Array[Array[Int32]] = []
+    // Equal share of main data per granule. A granule that cannot fit its share
+    // is coarsened rather than allowed to overrun the frame.
+    let share = (size * 8 - 32 - side_bits) / (2 * channels)
+    let plans : Array[GranulePlan] = []
     let granules : Array[GranuleInfo] = []
     for granule = 0; granule < 2; granule = granule + 1 {
       for channel = 0; channel < channels; channel = channel + 1 {
@@ -89,20 +164,32 @@ pub fn encode(
         let lines = analysis[channel].granule(pcm) catch {
           (_ : AnalysisError) => raise AnalysisFailed(frame)
         }
-        let (gain, quantized) = quantize_count1_fitting(lines, nonzero_limit) catch {
-          (_ : QuantizeError) => raise QuantizationFailed(frame)
+        let plan = plan_with_budget(lines, share)
+        if plan.cost > share {
+          raise HuffmanFailed(frame)
         }
-        payloads.push(quantized)
-        granules.push(GranuleInfo::count1(count1_cost(quantized), gain))
+        plans.push(plan)
+        granules.push(
+          GranuleInfo::big_values(
+            plan.cost,
+            plan.big_values,
+            plan.gain,
+            plan.table,
+          ),
+        )
       }
     }
     let w = @bits.BitWriter::new()
     write_header(w, BitrateIndex128, SampleRateIndex44100, mode, padding)
     let scfsi = Array::make(channels, 0)
     write_side_info(w, channels, 0, scfsi, granules)
-    for index = 0; index < payloads.length(); index = index + 1 {
-      let _ = write_count1(w, payloads[index]) catch {
-        (_ : Count1Error) => raise QuantizationFailed(frame)
+    for index = 0; index < plans.length(); index = index + 1 {
+      let plan = plans[index]
+      let written = write_granule(w, plan.values, plan.table, plan.big_values) catch {
+        (_ : HuffmanError) => raise HuffmanFailed(frame)
+      }
+      if written != plan.cost {
+        raise HuffmanFailed(frame)
       }
     }
     let stuffed = size * 8 - w.bit_length()
