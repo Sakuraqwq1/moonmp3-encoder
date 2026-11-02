@@ -286,7 +286,7 @@ pub fn peak_absolute(values : Array[Double]) -> Double {
 /// scores them against the decoder. A plain reversal wins; adding the half-bin
 /// sign alternation that the reversed modulation seems to suggest still decodes
 /// at the right frequency but drops the waveform from 16 dB to -1.5 dB, because
-/// the alternation rotates the phase by half a line. Measured on 2026-11-03:
+/// the alternation rotates the phase by half a line. Measured on 2026-11-02:
 /// identity -2.8 dB, reverse + half-bin -1.7 dB, plain reversal +16.0 dB.
 fn odd_band_value(
   spectrum : Array[Double],
