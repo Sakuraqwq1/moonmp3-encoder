@@ -450,8 +450,16 @@ class BoundaryMatrixTests(unittest.TestCase):
             )
             data, _ = mp3lab.decode_mp3(payload)
             self.assertLessEqual(
-                float(np.max(np.abs(data))), 1.05, percent
+                float(np.max(np.abs(data))), 1.00, percent
             )
+            if percent == 100:
+                # Target 0.87 attenuates a 100% full-scale input by ~1.2 dB.
+                # Verify that level loss does not exceed 1.3 dB.
+                decoded_rms = float(np.sqrt(np.mean(data[1057:16 * 1152, 0] ** 2)))
+                expected_rms = 1.0 / np.sqrt(2.0)
+                loss_db = 20.0 * np.log10(expected_rms / decoded_rms)
+                self.assertLessEqual(loss_db, 1.3)
+                self.assertGreaterEqual(loss_db, 0.0)
 
     def test_transient_switches_to_short_windows(self):
         # An isolated impulse must trigger start/short/stop window switching, and

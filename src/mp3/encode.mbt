@@ -496,10 +496,11 @@ pub fn encode_headroom(samples : Array[Int32]) -> Double {
     }
   }
   let normalised = peak.to_double() / 32768.0
-  if normalised < 0.95 {
+  let target = 0.87
+  if normalised <= target {
     1.0
   } else {
-    0.89 / normalised
+    target / normalised
   }
 }
 
