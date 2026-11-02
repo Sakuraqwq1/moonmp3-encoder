@@ -180,11 +180,20 @@ def shipped_analysis(samples: np.ndarray) -> list:
     return out
 
 
-def score(analysis, freq: float, granules: int = 24, skip: int = 4) -> dict:
-    """Closed-loop SNR of an analysis candidate: analyse, decode, compare."""
+def score(analysis, freq: float, granules: int = 24, skip: int = 4, noise: bool = False) -> dict:
+    """Closed-loop SNR of an analysis candidate: analyse, decode, compare.
+
+    With `noise` the probe is white noise. That matters: a periodic probe lets the
+    delay search lock onto a different cycle (204 samples for a 440 Hz tone is two
+    periods), which turns a phase offset into a fake SNR. Measurements recorded
+    before this was noticed are suspect; the noise probe has no such ambiguity.
+    """
     count = 576 * granules
     index = np.arange(count)
-    tone = np.sin(2 * np.pi * freq * index / 44100.0)
+    if noise:
+        tone = np.random.default_rng(5).standard_normal(count)
+    else:
+        tone = np.sin(2 * np.pi * freq * index / 44100.0)
     rebuilt = decode_granules(analysis(tone))
     start = skip * 576
     n = min(rebuilt.size, tone.size) - start - 576
@@ -219,6 +228,7 @@ def main() -> int:
     parser.add_argument("--verify", action="store_true", help="agree with libsndfile on the tone probe")
     parser.add_argument("--score", action="store_true", help="closed-loop score of the shipped analysis")
     parser.add_argument("--freq", type=float, default=0.0, help="one frequency, or all when omitted")
+    parser.add_argument("--noise", action="store_true", help="also score white noise (no phase ambiguity)")
     args = parser.parse_args()
     if not args.verify and not args.score:
         parser.error("choose --verify or --score")
@@ -233,11 +243,14 @@ def main() -> int:
             print("ok: the model is the decoder (int16 limited)")
     if args.score:
         freqs = [args.freq] if args.freq else [440.0, 685.0, 1000.0, 1390.0, 3000.0, 8000.0]
+        if args.noise:
+            report = score(shipped_analysis, 0.0, noise=True)
+            print(f"white noise: closed-loop {report['snr_db']:7.2f} dB")
         for freq in freqs:
             report = score(shipped_analysis, freq)
             print(
                 f"{report['freq']:7.0f} Hz: closed-loop {report['snr_db']:7.2f} dB, "
-                f"dominant {report['dominant_hz']:7.1f} Hz"
+                f"dominant {report['dominant_hz']:7.1f} Hz (delay {report['delay']})"
             )
     return status
 
