@@ -38,6 +38,16 @@
 
 `tools/odd_band.py`（线域映射实测）随 `odd_band_value` 一起删除，历史见 git。
 
+### 阶段 1 判据：9/9 通过
+
+按 `docs/stage1-handoff.md` §2 的九条逐条实测（证据表在 §2'）：440 Hz 主频 440.02 Hz、
+SNR 21.95 dB；立体声 440/660 串音 −50.1 / −43.6 dB；multitone 三分量 0/−4.8/−12.0 dB；
+帧长与解码长度 39×1152；10 个 fixture `mp3dump --strict` 全过；`main_data_begin` 恒 0；
+200 帧 83591 字节 = 累积公式；structure 12、moon test 29、selftest 32。
+
+阶段 1 因此收口。剩下的两项风险写进了 `docs/acceptance.md` 和阶段 2 门槛：满幅解码峰值
+1.12（过冲），以及量化器只有 granule 级 `global_gain`（整段 SNR 22–26 dB）。
+
 ## 2026-11-02（晚）：为什么单音都"正常"、宽带全毁 —— 带内镜像的本质
 
 白噪声闭合环给出 **0.01 dB**（用 `analysis_ref.py` 里与 MoonBit 吻合 1e-16 的实现测的，
