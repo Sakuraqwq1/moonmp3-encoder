@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的 **MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流。
 
-> 状态：**早期开发中（结构里程碑）**。帧头、边信息与 CBR 帧尺寸控制已就绪，输出是处处可解析、可解码的合法 MP3 流；主数据目前仍为静音，MDCT、量化与 Huffman 编码在接下来的版本落地。
+> 状态：**阶段 1 进行中（首个可听链路已打通）**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长块 MDCT 与 count1 Huffman 量化已就绪，真实 PCM 会产生可解码、频率正确的声音。big_values 表、scalefactor band 与码率控制尚未落地，因此宽带素材的音质仍然很粗。
 
 ## 为什么需要它
 
@@ -31,7 +31,7 @@ let samples : Array[Int32] = [0, 0, 100, -100]
 let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 ```
 
-> 当前版本是结构里程碑：输入采样值尚未参与编码，输出固定为静音。请勿把 0.1.x 用于真实音频导出；MDCT、量化与 Huffman 编码落地后会更新这里的能力说明。
+> 当前是阶段 1 的中间状态：PCM 真的被编码了，稳态音调的主频正确、幅度可辨认，但每条频率线只有一位（`big_values = 0`，全部落在 count1 区），所以宽带素材、瞬态和满幅信号还很粗。要用于真实音频导出，请等 big_values 与 scalefactor 落地。
 
 ## 验证方式
 
@@ -40,6 +40,8 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 - `tools/verify.py structure` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码输出，检查帧网格、长度和静音正确性。
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
 - `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。
+- `tools/probe_lines.py` 逐条激励频线并测量解码后的频率，产出 `docs/line-frequencies.md` 那张映射表。
+- `tools/analysis_ref.py` 用 numpy 独立重算分析滤波器组与 MDCT，和 MoonBit 输出逐线比对。
 - `tools/snr.py` 自动搜索解码延迟，测量逐声道和整体 SNR。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
 - `tools/selftest.py` 验证上述工具本身没有回归。
@@ -57,6 +59,7 @@ python tools/verify.py structure
 ## 开发资料
 
 - [阶段 1 交接](docs/stage1-handoff.md)：完成判据、数据流边界、调试顺序。
+- [频线到频率的映射](docs/line-frequencies.md)：实测的"尺子"，以及单线探针为什么分不清奇数 bin。
 - [测试素材](docs/fixtures.md)：每个 fixture 的内容和预期现象。
 - [工具链说明](docs/tooling.md)：素材、帧解析、频谱、SNR 和自测命令。
 - [验收自查](docs/acceptance.md)：验收 9 条现状与初审门槛。

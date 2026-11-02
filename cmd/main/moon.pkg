@@ -5,6 +5,7 @@ import {
   "Sakuraqwq1/moonmp3-encoder/src/mp3",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/env",
+  "moonbitlang/core/math",
   "moonbitlang/core/string",
 }
 

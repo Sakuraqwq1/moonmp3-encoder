@@ -3,4 +3,5 @@
 import {
   "Sakuraqwq1/moonmp3-encoder/src/bits",
   "moonbitlang/core/buffer",
+  "moonbitlang/core/math",
 }

@@ -280,6 +280,77 @@ class FixedSpectrumTests(unittest.TestCase):
         self.assertAlmostEqual(report["dominant_hz"], 459.375, delta=15.0)
 
 
+class AnalysisTests(unittest.TestCase):
+    """The PCM path: filterbank, MDCT, quantiser and the decoded result."""
+
+    def test_matches_the_numpy_reference(self):
+        import analysis_ref
+
+        for freq in (440, 1000):
+            report = analysis_ref.compare(freq, 50, 6)
+            self.assertLess(report["relative_error"], 1e-12, report)
+
+    def test_reference_properties(self):
+        import analysis_ref
+
+        self.assertEqual(analysis_ref.self_check(), 0)
+
+    def test_generated_sine_decodes_at_its_own_frequency(self):
+        # The dominant frequency of the decoded stream has to stay within one
+        # MDCT line (38.28125 Hz) of the input, including in the odd subbands
+        # where the analysis has to undo its own spectral reversal.
+        for freq in (440, 1000, 3000, 8000):
+            payload = mp3lab.extract_payload(
+                mp3lab.run_cli("sine", "16", str(freq), "50", "1")
+            )
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
+                handle.write(payload)
+                path = handle.name
+            try:
+                report = spectrum.analyze(path, 0, 5, 8192)
+            finally:
+                os.unlink(path)
+            self.assertIsNotNone(report["dominant_hz"], freq)
+            self.assertAlmostEqual(report["dominant_hz"], freq, delta=38.3, msg=freq)
+
+    def test_stereo_channels_stay_separate(self):
+        payload = mp3lab.extract_payload(
+            mp3lab.run_cli("sine", "16", "440,660", "50", "2")
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
+            handle.write(payload)
+            path = handle.name
+        try:
+            left = spectrum.analyze(path, 0, 3, 8192)
+            right = spectrum.analyze(path, 1, 3, 8192)
+        finally:
+            os.unlink(path)
+        self.assertAlmostEqual(left["dominant_hz"], 440.0, delta=38.3)
+        self.assertAlmostEqual(right["dominant_hz"], 660.0, delta=38.3)
+
+    def test_gain_stays_inside_the_side_info_field(self):
+        payload = mp3lab.extract_payload(
+            mp3lab.run_cli("sine", "4", "440", "100", "1")
+        )
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
+            handle.write(payload)
+            path = handle.name
+        try:
+            report = mp3dump.analyze(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(report["warnings"], [])
+        for frame in report["frames"]:
+            for granule in frame["side_info"]["granules"]:
+                self.assertGreaterEqual(granule["global_gain"], 0)
+                self.assertLessEqual(granule["global_gain"], 255)
+                self.assertEqual(granule["big_values"], 0)
+                self.assertEqual(granule["count1table_select"], 1)
+                # 576 mask bits plus at most one sign bit per coefficient.
+                self.assertGreaterEqual(granule["part2_3_length"], 576)
+                self.assertLessEqual(granule["part2_3_length"], 1152)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_reports_version(self):
         output = mp3lab.run_cli("version")
