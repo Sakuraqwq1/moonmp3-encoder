@@ -483,11 +483,19 @@ fn plan_frame(
 ///
 /// A small quantisation error can add in phase with a near-full-scale waveform
 /// after IMDCT overlap and synthesis, so a stream with an already-correct mean
-/// gain can still peak above 1.0. Near full scale, reserve a fixed 11 % of the
-/// input's range before analysis; at lower levels the value is exactly 1.0 and
-/// ordinary streams are bit-for-bit unchanged. Keeping this constant for the
-/// whole call is important: a per-frame switch would itself become audible
-/// amplitude modulation and would disturb the stereo balance.
+/// gain can still peak above 1.0. A full-scale sine measures about 1.15x, so the
+/// rule holds the input's peak at 0.87 of full scale: at or below that the
+/// factor is exactly 1.0 and ordinary streams are bit-for-bit unchanged, above
+/// it the call is attenuated by `0.87 / peak`. The factor is continuous, so no
+/// signal level falls in an unprotected band (a step threshold used to leave
+/// 0.87..0.95 overshooting by 2-4 %). Keeping it constant for the whole call
+/// matters too: a per-frame switch would itself become audible amplitude
+/// modulation and would disturb the stereo balance.
+///
+/// The cost is level, not noise: a 100 % input comes out about 1.2 dB quiet, so
+/// a full-scale probe scores below LAME against the *original* level and matches
+/// it once normalised. `tools/selftest.py` pins both ends — decoded peak ≤ 1.00
+/// and level loss ≤ 1.3 dB.
 pub fn encode_headroom(samples : Array[Int32]) -> Double {
   let mut peak = 0
   for sample in samples {
