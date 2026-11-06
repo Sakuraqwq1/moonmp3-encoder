@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- 性能：缓存长/短块 MDCT 的余弦矩阵及四种块窗口，不再为每个子带、每个
+  granule 重复计算三角函数；本地 3 秒单声道探针的热身运行耗时约从 1.01 s
+  降至 0.82 s（约 19 %），公开 API 不变，优化前后 MP3 输出逐字节一致
+- 测试：新增缓存窗口与余弦矩阵的逐项定义校验，`moon test` 由 42 增至 43 例
+- 文档：修正公开接口注释中“scalefactor 尚未接入”的过期描述，以及 README
+  中 Huffman 表仍“计划采用 minimp3”的过期来源说明
+
 ## [0.2.1] - 2026-11-03
 
 - 包描述修正：`moon.mod` 的 description 还写着"stream writer ... decodable

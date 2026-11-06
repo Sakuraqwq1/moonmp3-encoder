@@ -90,4 +90,4 @@ python tools/verify.py structure
 Apache-2.0，原创实现。
 
 - 规范：ISO/IEC 11172-3（MPEG-1 Audio）
-- 不读取、不移植 shine 或 LAME（均为 LGPL）；Huffman 表计划采用 CC0-1.0 的 minimp3 表作为数据，来源记录见 `docs/provenance.md`
+- 不读取、不移植 shine 或 LAME（均为 LGPL）；分析窗与 big_values Huffman 数值表取自 `hajimehoshi/go-mp3`（Apache-2.0）的固定版本，blob 与 SHA-256 来源记录见 `docs/provenance.md`

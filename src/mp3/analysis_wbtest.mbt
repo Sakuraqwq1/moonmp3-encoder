@@ -63,6 +63,43 @@ test "filterbank : a tone inside one band stays inside it" {
 }
 
 ///|
+test "mdct : cached windows and kernels match their mathematical definitions" {
+  for block_type = 0; block_type < 4; block_type = block_type + 1 {
+    for index = 0; index < LongBlockSamples; index = index + 1 {
+      assert_eq(
+        block_windows[block_type * LongBlockSamples + index],
+        block_window(block_type, index),
+      )
+    }
+  }
+  for line = 0; line < LongBlockLines; line = line + 1 {
+    for index = 0; index < LongBlockSamples; index = index + 1 {
+      let expected = @math.cos(
+        @math.PI /
+        72.0 *
+        (2.0 * index.to_double() + 19.0) *
+        (2.0 * line.to_double() + 1.0),
+      )
+      assert_eq(long_mdct_cosines[line * LongBlockSamples + index], expected)
+    }
+  }
+  for line = 0; line < ShortBlockLines; line = line + 1 {
+    for index = 0; index < ShortBlockSamples; index = index + 1 {
+      let expected = @math.cos(
+        @math.PI /
+        24.0 *
+        (2.0 * index.to_double() + 7.0) *
+        (2.0 * line.to_double() + 1.0),
+      )
+      assert_eq(short_mdct_cosines[line * ShortBlockSamples + index], expected)
+    }
+  }
+  for index = 0; index < ShortBlockSamples; index = index + 1 {
+    assert_eq(short_window[index], short_block_window(index))
+  }
+}
+
+///|
 test "mdct : overlapping blocks reconstruct through time-domain aliasing cancellation" {
   // Three blocks with 50 % overlap cover 72 samples. The sine window satisfies
   // w[n]^2 + w[n + 18]^2 = 1, so overlap-adding the windowed inverse transforms

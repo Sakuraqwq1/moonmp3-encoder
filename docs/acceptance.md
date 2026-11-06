@@ -12,13 +12,13 @@
 | 4 | README 说明目标、安装、用法、示例，可复现 | README 已改为真实编码状态与实测数字，`moon add` + `encode()` 示例可直接跑 | 满足 |
 | 5 | CI 覆盖检查、构建、测试 | check（三平台）、build（native/wasm-gc）、tools（Python）共 6 个作业 | 满足 |
 | 6 | 至少一个可运行示例或最小样例 | `moon run cmd/main -- selftest` / `sine` / `silent`，CI 在跑 | 满足 |
-| 7 | 完整测试覆盖核心功能路径 | `moon test` 42 例（滤波组、长短块 MDCT/窗切换、量化器、Huffman、scalefactor、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
+| 7 | 完整测试覆盖核心功能路径 | `moon test` 43 例（滤波组、长短块 MDCT/窗切换、缓存矩阵、量化器、Huffman、scalefactor、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
 | 8 | 发布到 mooncakes.io | 0.2.0 已发布（`moon view` 显示 Latest: 0.2.0），0.2.1 为包描述补丁；发布包与仓库一致 | 满足 |
 | 9 | OSI 许可证；移植须符合原许可证 | Apache-2.0；原创实现，未读取 LAME/shine；来源见 `docs/provenance.md` | 满足 |
 
 结论：**形式项 9/9 满足；阶段 1 的 9 条完成判据全部有实测证据**（见
-`docs/stage1-handoff.md` §2'）。已发布版本仍是 0.1.1（结构里程碑），仓库 `main` 已经
-超出该版本；0.2.0 属于阶段 2 的收口动作，不提前 bump。
+`docs/stage1-handoff.md` §2'）。当前发布版本为 0.2.1，阶段 2 的核心能力已经落地；
+后续维护保持公开 API 与已发布标签不变，修复和新能力通过后续补丁版本发布。
 
 ## 二、阶段 1 完成前的初审红线
 

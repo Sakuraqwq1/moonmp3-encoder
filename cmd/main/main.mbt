@@ -67,9 +67,9 @@ fn run_selftest() -> Unit {
 }
 
 ///|
-/// Emit `n` samples per channel of digital silence. The verification harness
-/// uses this until real audio coding lands: what it checks today is that the
-/// frame grid is exact and the stream decodes to the right length.
+/// Emit `n` samples per channel of digital silence. This remains a structural
+/// regression check now that real audio coding has landed: the frame grid must
+/// stay exact and the stream must decode to the requested length.
 fn run_silent(args : Array[String]) -> Unit {
   let count = parse_count(args, 2, 44100)
   let channels = parse_count(args, 3, 1)

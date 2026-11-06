@@ -126,6 +126,78 @@ pub fn block_window(block_type : Int32, index : Int32) -> Double {
 }
 
 ///|
+/// Cache the four transform windows. Window selection only chooses an array;
+/// the sample ordering and arithmetic in the transforms stay unchanged.
+fn make_block_windows() -> Array[Double] {
+  let windows = Array::make(4 * LongBlockSamples, 0.0)
+  for index = 0; index < LongBlockSamples; index = index + 1 {
+    windows[index] = long_block_window(index)
+    windows[LongBlockSamples + index] = start_block_window(index)
+    windows[LongBlockSamples * 2 + index] = long_block_window(index)
+    windows[LongBlockSamples * 3 + index] = stop_block_window(index)
+  }
+  windows
+}
+
+///|
+let block_windows : Array[Double] = make_block_windows()
+
+///|
+/// Window of the 12-point short transform, cached separately because its
+/// length differs from the four 36-sample block windows.
+fn make_short_window() -> Array[Double] {
+  let window = Array::make(ShortBlockSamples, 0.0)
+  for index = 0; index < ShortBlockSamples; index = index + 1 {
+    window[index] = short_block_window(index)
+  }
+  window
+}
+
+///|
+let short_window : Array[Double] = make_short_window()
+
+///|
+/// DCT-IV kernels used by every subband of every granule. Computing them once
+/// removes hundreds of thousands of repeated trigonometric calls per second of
+/// audio, which matters especially for the browser/wasm-gc use case.
+fn make_long_mdct_cosines() -> Array[Double] {
+  let cosines = Array::make(LongBlockLines * LongBlockSamples, 0.0)
+  for line = 0; line < LongBlockLines; line = line + 1 {
+    for index = 0; index < LongBlockSamples; index = index + 1 {
+      cosines[line * LongBlockSamples + index] = @math.cos(
+        @math.PI /
+        72.0 *
+        (2.0 * index.to_double() + 19.0) *
+        (2.0 * line.to_double() + 1.0),
+      )
+    }
+  }
+  cosines
+}
+
+///|
+let long_mdct_cosines : Array[Double] = make_long_mdct_cosines()
+
+///|
+fn make_short_mdct_cosines() -> Array[Double] {
+  let cosines = Array::make(ShortBlockLines * ShortBlockSamples, 0.0)
+  for line = 0; line < ShortBlockLines; line = line + 1 {
+    for index = 0; index < ShortBlockSamples; index = index + 1 {
+      cosines[line * ShortBlockSamples + index] = @math.cos(
+        @math.PI /
+        24.0 *
+        (2.0 * index.to_double() + 7.0) *
+        (2.0 * line.to_double() + 1.0),
+      )
+    }
+  }
+  cosines
+}
+
+///|
+let short_mdct_cosines : Array[Double] = make_short_mdct_cosines()
+
+///|
 /// Filterbank matrix element `(subband, tap)`: `cos((2 subband + 1)(tap - 16)
 /// pi / 64)`. Precomputing the 32x64 matrix turns the per-step cost into plain
 /// multiplies; without it every step would need 2048 cosines.
@@ -262,22 +334,14 @@ pub fn mdct_long(block : Array[Double]) -> Array[Double] raise AnalysisError {
   if block.length() != LongBlockSamples {
     raise BadBlockLength(block.length())
   }
-  let windowed = Array::make(LongBlockSamples, 0.0)
-  for index = 0; index < LongBlockSamples; index = index + 1 {
-    windowed[index] = block[index] * long_block_window(index)
-  }
   let lines = Array::make(LongBlockLines, 0.0)
   for line = 0; line < LongBlockLines; line = line + 1 {
     let mut sum = 0.0
     for index = 0; index < LongBlockSamples; index = index + 1 {
       sum = sum +
-        windowed[index] *
-        @math.cos(
-          @math.PI /
-          72.0 *
-          (2.0 * index.to_double() + 19.0) *
-          (2.0 * line.to_double() + 1.0),
-        )
+        block[index] *
+        block_windows[index] *
+        long_mdct_cosines[line * LongBlockSamples + index]
     }
     lines[line] = sum
   }
@@ -296,22 +360,21 @@ pub fn mdct_switched_long(
   if block_type == BlockTypeShort {
     raise BadBlockLength(block.length())
   }
-  let windowed = Array::make(LongBlockSamples, 0.0)
-  for index = 0; index < LongBlockSamples; index = index + 1 {
-    windowed[index] = block[index] * block_window(block_type, index)
-  }
   let lines = Array::make(LongBlockLines, 0.0)
+  let window_offset = if block_type == BlockTypeStart {
+    LongBlockSamples
+  } else if block_type == BlockTypeStop {
+    LongBlockSamples * 3
+  } else {
+    0
+  }
   for line = 0; line < LongBlockLines; line = line + 1 {
     let mut sum = 0.0
     for index = 0; index < LongBlockSamples; index = index + 1 {
       sum = sum +
-        windowed[index] *
-        @math.cos(
-          @math.PI /
-          72.0 *
-          (2.0 * index.to_double() + 19.0) *
-          (2.0 * line.to_double() + 1.0),
-        )
+        block[index] *
+        block_windows[window_offset + index] *
+        long_mdct_cosines[line * LongBlockSamples + index]
     }
     lines[line] = sum
   }
@@ -329,22 +392,14 @@ pub fn mdct_short(block : Array[Double]) -> Array[Double] raise AnalysisError {
   if block.length() != ShortBlockSamples {
     raise BadBlockLength(block.length())
   }
-  let windowed = Array::make(ShortBlockSamples, 0.0)
-  for index = 0; index < ShortBlockSamples; index = index + 1 {
-    windowed[index] = block[index] * short_block_window(index)
-  }
   let lines = Array::make(ShortBlockLines, 0.0)
   for line = 0; line < ShortBlockLines; line = line + 1 {
     let mut sum = 0.0
     for index = 0; index < ShortBlockSamples; index = index + 1 {
       sum = sum +
-        windowed[index] *
-        @math.cos(
-          @math.PI /
-          24.0 *
-          (2.0 * index.to_double() + 7.0) *
-          (2.0 * line.to_double() + 1.0),
-        )
+        block[index] *
+        short_window[index] *
+        short_mdct_cosines[line * ShortBlockSamples + index]
     }
     lines[line] = sum
   }
