@@ -77,7 +77,6 @@ python tools/verify.py structure
 
 ## 开发资料
 
-- [阶段 1 交接](docs/stage1-handoff.md)：完成判据、数据流边界、调试顺序。
 - [频线到频率的映射](docs/line-frequencies.md)：实测的"尺子"，以及单线探针为什么分不清奇数 bin。
 - [测试素材](docs/fixtures.md)：每个 fixture 的内容和预期现象。
 - [工具链说明](docs/tooling.md)：素材、帧解析、频谱、SNR 和自测命令。
