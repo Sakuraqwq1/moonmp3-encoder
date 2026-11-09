@@ -12,7 +12,7 @@ MoonBit 生态里已有纯 MoonBit 的 MP3 **解码器**（`enanandesu/mp3`）�
 
 本项目补上"写出"这一半：纯 MoonBit、零 FFI、可在 wasm-gc 与 native 上跑，输出是标准 MP3 流，任何解码器（libsndfile、ffmpeg、浏览器）都能读。
 
-## 目标范围（v1）
+## 核心功能与参数范围
 
 - MPEG-1 Layer III，44100 Hz，单声道 / 立体声
 - 固定比特率 128 kbps
@@ -33,7 +33,9 @@ let mp3 : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
 
 > 核心声学与技术指标：稳态音调主频偏差 ≤0.12 Hz、整段 SNR 27.6–32.7 dB；正弦/多音/扫频/白噪声四个探针优于同码率 LAME；满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB），归一到同一电平后 28.92 dB 高于 LAME；已接入 scalefactor band、位保留区和瞬态短块切换，输入峰值 50–100 % 时解码峰值全部严格保持在 ≤1.00 以内（代价是满幅输出电平低约 1.2 dB）。白噪声这类平坦信号约 13 dB，属 128 kbps 单声道下量化格点的固有边界，不是结构缺陷。
 
-### 同码率对比（PyAV libmp3lame 128 kbps mono CBR，0.18 s 片段，libsndfile 解码，延迟对齐）
+### 同码率基准测试（vs LAME）
+
+> **测试基准说明**：采用行业标准 `libmp3lame`（128 kbps mono CBR，0.18 s 片段），编码输出统一由第三方独立解码器 `libsndfile` 解码并进行时延对齐后计算信噪比（SNR）：
 
 | 探针 | 本编码器 | LAME 128k | 差异 | 说明 |
 | --- | ---: | ---: | ---: | --- |
