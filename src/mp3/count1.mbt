@@ -2,14 +2,11 @@
 // Copyright 2026 Sakuraqwq1
 // Licensed under the Apache License, Version 2.0.
 
-// Count1-region Huffman coding, table B. ISO/IEC 11172-3 Table B.7:
-// each four coefficients are represented by a four-bit mask of the non-zero
-// positions, followed by one sign bit per non-zero coefficient. The codeword
-// is the bitwise complement of that mask. Values are restricted to -1/0/1.
-//
-// This deliberately small subset is the first vertical slice of the encoder.
-// It lets the bitstream and frame assembly be verified independently of the
-// analysis filterbank and the larger big-values Huffman tables.
+// Count1-region Huffman coding, table A. ISO/IEC 11172-3 Table B.7:
+// each four coefficients are represented by the codeword for their non-zero
+// mask, followed by one sign bit per non-zero coefficient. Values are
+// restricted to -1/0/1. After the last non-zero quadruple, table A's one-bit
+// all-zero code terminates the tail; the remaining zero quadruples cost nothing.
 
 ///|
 /// Errors reported by the count1 writer and its fixed-spectrum test encoder.
@@ -23,29 +20,65 @@ pub suberror Count1Error {
 }
 
 ///|
-/// Number of bits needed for a count1-region sequence.
-///
-/// Every group of four coefficients costs four bits for its mask, plus one
-/// sign bit for each non-zero coefficient. The length must be a non-zero
-/// multiple of four and every value must be -1, 0 or 1.
-pub fn count1_bits(values : Array[Int32]) -> Int32 raise Count1Error {
+/// Validate a count1 region and return the end of its last non-zero quadruple.
+fn count1_last_end(values : Array[Int32]) -> Int32 raise Count1Error {
   if values.length() == 0 || values.length() % 4 != 0 {
     raise BadLength(values.length())
   }
-  let mut bits = values.length()
-  for value in values {
-    if value < -1 || value > 1 {
-      raise BadValue(value)
+  let mut last = 0
+  for base = 0; base < values.length(); base = base + 4 {
+    let mut nonzero = false
+    for offset = 0; offset < 4; offset = offset + 1 {
+      let value = values[base + offset]
+      if value < -1 || value > 1 {
+        raise BadValue(value)
+      }
+      if value != 0 {
+        nonzero = true
+      }
     }
-    if value != 0 {
-      bits = bits + 1
+    if nonzero {
+      last = base + 4
+    }
+  }
+  last
+}
+
+///|
+/// Non-zero mask for one already-validated quadruple.
+fn count1_mask(values : Array[Int32], base : Int32) -> Int32 {
+  let mut mask = 0
+  for offset = 0; offset < 4; offset = offset + 1 {
+    if values[base + offset] != 0 {
+      mask = mask | (1 << (3 - offset))
+    }
+  }
+  mask
+}
+
+///|
+/// Number of bits needed for a count1-region sequence.
+///
+/// Every quadruple through the last non-zero one pays its table-A code and sign
+/// bits. One final all-zero code then terminates the tail. The length must be a
+/// non-zero multiple of four and every value must be -1, 0 or 1.
+pub fn count1_bits(values : Array[Int32]) -> Int32 raise Count1Error {
+  let last = count1_last_end(values)
+  let mut bits = 1
+  for base = 0; base < last; base = base + 4 {
+    let entry = count1_table_a[count1_mask(values, base)]
+    bits = bits + (entry >> 16)
+    for offset = 0; offset < 4; offset = offset + 1 {
+      if values[base + offset] != 0 {
+        bits = bits + 1
+      }
     }
   }
   bits
 }
 
 ///|
-/// Write a count1-region sequence using Huffman table B.
+/// Write a count1-region sequence using Huffman table A and early termination.
 ///
 /// The return value is the exact number of bits written and is suitable for
 /// `part2_3_length` when no scalefactors are transmitted.
@@ -53,23 +86,25 @@ pub fn write_count1(
   w : @bits.BitWriter,
   values : Array[Int32],
 ) -> Int32 raise Count1Error {
-  let bits = count1_bits(values)
-  for base = 0; base < values.length(); base = base + 4 {
-    let mut mask = 0
-    for offset = 0; offset < 4; offset = offset + 1 {
-      if values[base + offset] != 0 {
-        mask = mask | (1 << (3 - offset))
-      }
-    }
-    w.write_bits((15 - mask).to_int64(), 4)
+  let last = count1_last_end(values)
+  let mut bits = 0
+  for base = 0; base < last; base = base + 4 {
+    let entry = count1_table_a[count1_mask(values, base)]
+    let length = entry >> 16
+    w.write_bits((entry & 0xFFFF).to_int64(), length)
+    bits = bits + length
     for offset = 0; offset < 4; offset = offset + 1 {
       let value = values[base + offset]
       if value != 0 {
         w.write_bit(if value < 0 { 1 } else { 0 })
+        bits = bits + 1
       }
     }
   }
-  bits
+  let terminator = count1_table_a[0]
+  let length = terminator >> 16
+  w.write_bits((terminator & 0xFFFF).to_int64(), length)
+  bits + length
 }
 
 ///|
@@ -96,6 +131,6 @@ pub fn GranuleInfo::count1(
     region1_count: 0,
     preflag: 0,
     scalefac_scale: 0,
-    count1table_select: 1,
+    count1table_select: 0,
   }
 }

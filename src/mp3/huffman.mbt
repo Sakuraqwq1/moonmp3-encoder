@@ -130,7 +130,7 @@ pub fn write_pair(
 ///
 /// The count1 region may only carry -1/0/1, so big_values has to cover every
 /// coefficient whose magnitude is 2 or more. Coefficients of +-1 beyond that
-/// point are cheaper in count1 (four mask bits for four values) than as pairs
+/// point use compact count1 quadruple codes instead of more costly pairs,
 /// (at least two bits each plus signs), so the boundary stops at the last
 /// "big" coefficient instead of the last non-zero one.
 pub fn big_values_needed(values : Array[Int32]) -> Int32 {
@@ -228,13 +228,15 @@ pub fn granule_cost(
     return -1
   }
   let tail_start = big_values * 2
-  let mut cost = head + (576 - tail_start)
-  for index = tail_start; index < values.length(); index = index + 1 {
-    if values[index] != 0 {
-      cost = cost + 1
-    }
+  if tail_start >= values.length() {
+    return head
   }
-  cost
+  let tail = Array::make(values.length() - tail_start, 0)
+  for index = tail_start; index < values.length(); index = index + 1 {
+    tail[index - tail_start] = values[index]
+  }
+  let tail_bits = count1_bits(tail) catch { (_ : Count1Error) => return -1 }
+  head + tail_bits
 }
 
 ///|
@@ -286,7 +288,7 @@ pub fn GranuleInfo::scaled(
     region1_count: 0,
     preflag: 0,
     scalefac_scale: 0,
-    count1table_select: 1,
+    count1table_select: 0,
   }
 }
 
@@ -322,7 +324,7 @@ pub fn GranuleInfo::short(
     region1_count: 63,
     preflag: 0,
     scalefac_scale: 0,
-    count1table_select: 1,
+    count1table_select: 0,
   }
 }
 
@@ -356,7 +358,7 @@ pub fn GranuleInfo::switched_long(
     region1_count: 63,
     preflag: 0,
     scalefac_scale: 0,
-    count1table_select: 1,
+    count1table_select: 0,
   }
 }
 

@@ -266,9 +266,9 @@ class FixedSpectrumTests(unittest.TestCase):
             self.assertGreaterEqual(frame["side_info"]["main_data_begin"], 0)
             self.assertLessEqual(frame["side_info"]["main_data_begin"], 511)
             for granule in frame["side_info"]["granules"]:
-                self.assertEqual(granule["part2_3_length"], 577)
+                self.assertEqual(granule["part2_3_length"], 9)
                 self.assertEqual(granule["big_values"], 0)
-                self.assertEqual(granule["count1table_select"], 1)
+                self.assertEqual(granule["count1table_select"], 0)
 
     def test_decodes_to_a_fixed_tone(self):
         data, rate = mp3lab.decode_mp3(self.payload)
@@ -356,15 +356,15 @@ class AnalysisTests(unittest.TestCase):
                 # big_values counts pairs, so it is even and cannot exceed 288.
                 self.assertEqual(granule["big_values"] % 2, 0)
                 self.assertLessEqual(granule["big_values"], 288)
-                self.assertEqual(granule["count1table_select"], 1)
+                self.assertEqual(granule["count1table_select"], 0)
                 # Every MPEG-1 table reaches at most 15 and uses no escapes.
                 for table in granule["table_select"]:
                     self.assertTrue(table in (0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15), table)
-                # At least the 576 count1 mask bits have to be paid for, and no
-                # granule may claim more than what the decoder can reach at this
-                # frame (the borrowed bytes plus this frame's area, shared by the
-                # two granules of the channel).
-                self.assertGreaterEqual(granule["part2_3_length"], 576)
+                # Table A needs only its one-bit all-zero code after the last
+                # non-zero count1 quadruple. No granule may claim more than what
+                # the decoder can reach at this frame (the borrowed bytes plus
+                # this frame's area, shared by the two granules of the channel).
+                self.assertGreaterEqual(granule["part2_3_length"], 1)
                 self.assertLessEqual(granule["part2_3_length"], reachable // 2)
 
     def test_big_values_lifts_the_sine_above_twenty_db(self):

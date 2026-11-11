@@ -160,39 +160,71 @@ fn rejects(samples : Array[Int32], rate : Int32, channels : Int32) -> Bool {
 }
 
 ///|
-test "count1 : zero quadruple is table-B code 1111" {
+test "count1 : zero quadruple is table-A terminator 1" {
   let w = @bits.BitWriter::new()
-  assert_eq(write_count1(w, [0, 0, 0, 0]), 4)
+  assert_eq(write_count1(w, [0, 0, 0, 0]), 1)
   let bytes = w.finish()
   assert_eq(bytes.length(), 1)
-  assert_eq(bytes[0].to_int(), 0xF0)
+  assert_eq(bytes[0].to_int(), 0x80)
 }
 
 ///|
 test "count1 : positive first coefficient emits code then sign zero" {
   let w = @bits.BitWriter::new()
-  assert_eq(write_count1(w, [1, 0, 0, 0]), 5)
+  assert_eq(write_count1(w, [1, 0, 0, 0]), 6)
   let bytes = w.finish()
   assert_eq(bytes.length(), 1)
-  assert_eq(bytes[0].to_int(), 0x70)
+  assert_eq(bytes[0].to_int(), 0x74)
 }
 
 ///|
 test "count1 : negative first coefficient emits sign one" {
   let w = @bits.BitWriter::new()
-  assert_eq(write_count1(w, [-1, 0, 0, 0]), 5)
+  assert_eq(write_count1(w, [-1, 0, 0, 0]), 6)
   let bytes = w.finish()
   assert_eq(bytes.length(), 1)
-  assert_eq(bytes[0].to_int(), 0x78)
+  assert_eq(bytes[0].to_int(), 0x7C)
 }
 
 ///|
 test "count1 : all four non-zero coefficients carry four sign bits" {
   let w = @bits.BitWriter::new()
-  assert_eq(write_count1(w, [1, -1, 1, -1]), 8)
+  assert_eq(write_count1(w, [1, -1, 1, -1]), 11)
   let bytes = w.finish()
-  assert_eq(bytes.length(), 1)
+  assert_eq(bytes.length(), 2)
   assert_eq(bytes[0].to_int(), 0x05)
+  assert_eq(bytes[1].to_int(), 0x60)
+}
+
+///|
+test "count1 : keeps leading zero quads and drops the zero tail" {
+  let leading = @bits.BitWriter::new()
+  assert_eq(write_count1(leading, [0, 0, 0, 0, 1, 0, 0, 0]), 7)
+  assert_eq(leading.finish()[0].to_int(), 0xBA)
+  let trailing = @bits.BitWriter::new()
+  assert_eq(write_count1(trailing, [1, 0, 0, 0, 0, 0, 0, 0]), 6)
+  assert_eq(trailing.finish()[0].to_int(), 0x74)
+}
+
+///|
+test "count1 table A : complete prefix code with sixteen symbols" {
+  assert_eq(count1_table_a.length(), 16)
+  let mut kraft = 0
+  for left = 0; left < count1_table_a.length(); left = left + 1 {
+    let a = count1_table_a[left]
+    let a_len = a >> 16
+    let a_code = a & 0xFFFF
+    assert_true(a_len > 0 && a_len <= 6)
+    kraft = kraft + (1 << (6 - a_len))
+    for right = left + 1; right < count1_table_a.length(); right = right + 1 {
+      let b = count1_table_a[right]
+      let b_len = b >> 16
+      let b_code = b & 0xFFFF
+      let common = if a_len < b_len { a_len } else { b_len }
+      assert_true(a_code >> (a_len - common) != b_code >> (b_len - common))
+    }
+  }
+  assert_eq(kraft, 64)
 }
 
 ///|
@@ -210,7 +242,7 @@ test "count1 spectrum : side info length matches the emitted bits" {
   // Header is four bytes. After main_data_begin/private/scfsi, part2_3_length
   // starts at side-info bit 18: six bits in byte 6 and six more in byte 7.
   let length = ((mp3[6].to_int() & 0x3F) << 6) | (mp3[7].to_int() >> 2)
-  assert_eq(length, 577)
+  assert_eq(length, 9)
 }
 
 ///|

@@ -536,6 +536,16 @@ test "huffman : big_values covers every coefficient above one" {
   assert_eq(big_values_needed(values), 6)
   let zeros = Array::make(576, 0)
   assert_eq(big_values_needed(zeros), 0)
+  assert_eq(granule_cost(zeros, 0, 0), 1)
+  let w = @bits.BitWriter::new()
+  let written = write_granule(w, zeros, 0, 0) catch {
+    (_ : HuffmanError) => {
+      assert_true(false)
+      return
+    }
+  }
+  assert_eq(written, 1)
+  assert_eq(w.finish()[0].to_int(), 0x80)
 }
 
 ///|
