@@ -141,7 +141,7 @@ test "encode : headroom only engages near full scale" {
 
 ///|
 test "encode : rejects what v1 does not support" {
-  assert_eq(rejects([0, 0, 0, 0], 48000, 2), true)
+  assert_eq(rejects([0, 0, 0, 0], 22050, 2), true)
   assert_eq(rejects([0, 0, 0, 0], 44100, 3), true)
   assert_eq(rejects([], 44100, 1), true)
   assert_eq(rejects([1, 2, 3], 44100, 2), true)

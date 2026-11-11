@@ -24,6 +24,8 @@ fn main {
     run_lines(args)
   } else if command == "alloc" {
     run_alloc(args)
+  } else if command == "gen" {
+    run_gen(args)
   } else if command == "version" {
     println(@encoder.version())
   } else {
@@ -45,6 +47,77 @@ fn main {
     )
     println("  version    print the module version")
   }
+}
+
+///|
+/// Generate and encode audio at a specified sample rate, bitrate and channel count.
+/// Usage: gen <rate> <bitrate> <channels> <frames> [freq]
+fn run_gen(args : Array[String]) -> Unit {
+  let rate = parse_count(args, 2, 44100)
+  let bitrate = parse_count(args, 3, 128000)
+  let channels = parse_count(args, 4, 1)
+  let frames = parse_count(args, 5, 4)
+  let freq = parse_count(args, 6, 440)
+  if channels != 1 && channels != 2 {
+    println("ERROR: channels must be 1 or 2")
+    return
+  }
+  if frames <= 0 {
+    println("ERROR: frames must be positive")
+    return
+  }
+  let count = frames * 1152
+  let samples = Array::make(count * channels, 0)
+  if freq > 0 {
+    let scale = 0.5 * 32767.0
+    for index = 0; index < count; index = index + 1 {
+      let phase = 2.0 *
+        @math.PI *
+        freq.to_double() *
+        index.to_double() /
+        rate.to_double()
+      let value = (scale * @math.sin(phase)).round().to_int()
+      for channel = 0; channel < channels; channel = channel + 1 {
+        samples[index * channels + channel] = value
+      }
+    }
+  }
+  let mp3 = @mp3.encode(samples, rate, channels, bitrate~) catch {
+    @mp3.AnalysisFailed(frame) => {
+      println("ERROR: analysis failed in frame \{frame}")
+      return
+    }
+    @mp3.HuffmanFailed(frame) => {
+      println("ERROR: huffman failed in frame \{frame}")
+      return
+    }
+    @mp3.EmptyInput => {
+      println("ERROR: no samples")
+      return
+    }
+    @mp3.NotInterleaved(c) => {
+      println("ERROR: \{c} samples are not a whole number of frames")
+      return
+    }
+    @mp3.UnsupportedSampleRate(r) => {
+      println("ERROR: sample rate \{r} is not supported")
+      return
+    }
+    @mp3.UnsupportedBitrate(b) => {
+      println("ERROR: bitrate \{b} is not supported")
+      return
+    }
+    @mp3.UnsupportedChannels(c) => {
+      println("ERROR: \{c} channels is not supported")
+      return
+    }
+  }
+  println(
+    "rate=\{rate} channels=\{channels} bitrate=\{bitrate} frames=\{frames} samples=\{count}",
+  )
+  println("bytes=\{mp3.length()}")
+  println("MP3BEGIN")
+  println(@base64.encode(mp3[:]))
 }
 
 ///|
@@ -187,6 +260,10 @@ fn run_sine(args : Array[String]) -> Unit {
     }
     @mp3.UnsupportedChannels(count) => {
       println("ERROR: \{count} channels is not supported")
+      return
+    }
+    @mp3.UnsupportedBitrate(bitrate) => {
+      println("ERROR: bitrate \{bitrate} is not supported")
       return
     }
   }

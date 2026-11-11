@@ -9,8 +9,10 @@
 ///|
 /// Failures the encoder can report.
 pub suberror EncodeError {
-  /// v1 emits 44100 Hz only; other rates are planned for later versions.
+  /// The encoder supports MPEG-1 sample rates (32000, 44100, 48000 Hz).
   UnsupportedSampleRate(Int32)
+  /// The encoder supports MPEG-1 Layer III bitrates (32..320 kbps).
+  UnsupportedBitrate(Int32)
   /// v1 emits mono and stereo only.
   UnsupportedChannels(Int32)
   /// The sample count is not a whole number of frames for the channel count.
@@ -595,9 +597,16 @@ pub fn encode(
   samples : Array[Int32],
   sample_rate : Int32,
   channels : Int32,
+  bitrate~ : Int32 = Bitrate128kbps,
 ) -> Bytes raise EncodeError {
-  if sample_rate != SampleRate44100 {
+  let sr_idx = sample_rate_index(sample_rate)
+  if sr_idx < 0 {
     raise UnsupportedSampleRate(sample_rate)
+  }
+  let bps = if bitrate < 1000 { bitrate * 1000 } else { bitrate }
+  let br_idx = bitrate_index(bps)
+  if br_idx < 1 || br_idx > 14 {
+    raise UnsupportedBitrate(bitrate)
   }
   if channels != 1 && channels != 2 {
     raise UnsupportedChannels(channels)
@@ -608,12 +617,14 @@ pub fn encode(
   if samples.length() % channels != 0 {
     raise NotInterleaved(samples.length())
   }
+  let prev_rate = get_active_samplerate()
+  set_active_samplerate(sample_rate)
   let per_channel = samples.length() / channels
   let headroom = encode_headroom(samples)
   let nframes = (per_channel + FrameSamples - 1) / FrameSamples
   let block_types = schedule_block_types(samples, channels, nframes)
   let mode = if channels == 1 { ModeMono } else { ModeStereo }
-  let sizer = FrameSizer::new(Bitrate128kbps, sample_rate)
+  let sizer = FrameSizer::new(bps, sample_rate)
   let analysis : Array[ChannelAnalysis] = []
   for channel = 0; channel < channels; channel = channel + 1 {
     analysis.push(ChannelAnalysis::new())
@@ -640,10 +651,11 @@ pub fn encode(
     let plan = plans[frame]
     let main_data_begin = reservoir.placed() / 8 - plan.start / 8
     if main_data_begin < 0 || main_data_begin > 511 {
+      set_active_samplerate(prev_rate)
       raise AnalysisFailed(frame)
     }
     let w = @bits.BitWriter::new()
-    write_header(w, BitrateIndex128, SampleRateIndex44100, mode, plan.padding)
+    write_header(w, br_idx, sr_idx, mode, plan.padding)
     let scfsi = Array::make(channels, 0)
     write_side_info(w, channels, main_data_begin, scfsi, plan.granules)
     let capacity = plan.size * 8 - 32 - side_bits
@@ -653,5 +665,17 @@ pub fn encode(
       out.write_byte(bytes[index])
     }
   }
+  set_active_samplerate(prev_rate)
   out.to_bytes()
+}
+
+///|
+/// Convenience wrapper with positional bitrate argument.
+pub fn encode_at(
+  samples : Array[Int32],
+  sample_rate : Int32,
+  channels : Int32,
+  bitrate : Int32,
+) -> Bytes raise EncodeError {
+  encode(samples, sample_rate, channels, bitrate~)
 }

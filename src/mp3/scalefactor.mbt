@@ -34,13 +34,61 @@ pub const LongFrequencyBandCount : Int32 = 22
 
 ///|
 /// Start line of each transmitted scalefactor band, ISO/IEC 11172-3
-/// Table B.8.b (44.1 kHz). The width of band `b` is
-/// `start(b + 1) - start(b)`; the last transmitted band ends at 418 and the
-/// unscaled band 21 covers 418..575.
-let long_scalefactor_starts : Array[Int32] = [
+/// Table B.8.a (32 kHz). Widths: 4, 4, 4, 4, 4, 4, 6, 6, 8, 10, 12, 16, 20,
+/// 24, 30, 38, 46, 56, 68, 84, 102.
+/// Transmitted bands sfb 0..20 end at 550; the unscaled band 21 covers 550..575 (width 26).
+let long_scalefactor_starts_32k : Array[Int32] = [
+  0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156, 194, 240, 296,
+  364, 448,
+]
+
+///|
+/// Start line of each transmitted scalefactor band, ISO/IEC 11172-3
+/// Table B.8.b (44.1 kHz). Widths: 4, 4, 4, 4, 4, 4, 6, 6, 8, 8, 10, 12, 16,
+/// 20, 24, 28, 34, 42, 50, 54, 76.
+/// Transmitted bands sfb 0..20 end at 418; the unscaled band 21 covers 418..575 (width 158).
+let long_scalefactor_starts_44k : Array[Int32] = [
   0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288,
   342,
 ]
+
+///|
+/// Start line of each transmitted scalefactor band, ISO/IEC 11172-3
+/// Table B.8.c (48 kHz). Widths: 4, 4, 4, 4, 4, 4, 6, 6, 6, 8, 10, 12, 16,
+/// 18, 22, 28, 34, 40, 46, 54, 54.
+/// Transmitted bands sfb 0..20 end at 384; the unscaled band 21 covers 384..575 (width 192).
+let long_scalefactor_starts_48k : Array[Int32] = [
+  0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128, 156, 190, 230, 276,
+  330,
+]
+
+///|
+/// Active sample rate tracker for band-table selection during encoding.
+let active_rate : Ref[Int32] = { val: 44100, }
+
+///|
+/// Set the active sample rate used by scalefactor band queries.
+pub fn set_active_samplerate(rate : Int32) -> Unit {
+  active_rate.val = rate
+}
+
+///|
+/// Get the active sample rate used by scalefactor band queries.
+pub fn get_active_samplerate() -> Int32 {
+  active_rate.val
+}
+
+///|
+/// Band starts and unscaled tail boundary for a given sample rate.
+fn long_scalefactor_partition_for(rate : Int32) -> (Array[Int32], Int32) {
+  if rate == SampleRate32000 {
+    (long_scalefactor_starts_32k, 550)
+  } else if rate == SampleRate48000 {
+    (long_scalefactor_starts_48k, 384)
+  } else {
+    (long_scalefactor_starts_44k, 418)
+  }
+}
 
 ///|
 /// Short-window scalefactor bands transmitted per granule: 12 bands, each with
@@ -336,54 +384,69 @@ pub fn scalefactor_compress(scalefactors : Array[Int32]) -> Int32 {
 
 ///|
 /// Start line of a transmitted scalefactor band, 0..20.
-pub fn scalefactor_band_start(band : Int32) -> Int32 {
+pub fn scalefactor_band_start(
+  band : Int32,
+  rate~ : Int32 = active_rate.val,
+) -> Int32 {
   if band <= 0 {
     0
-  } else if band < LongScalefactorBandCount {
-    long_scalefactor_starts[band]
-  } else if band == LongScalefactorBandCount {
-    // The unscaled tail is a partition of its own, starting where sfb 20 ends.
-    418
   } else {
-    576
+    let (starts, tail_start) = long_scalefactor_partition_for(rate)
+    if band < LongScalefactorBandCount {
+      starts[band]
+    } else if band == LongScalefactorBandCount {
+      tail_start
+    } else {
+      576
+    }
   }
 }
 
 ///|
 /// End line (exclusive) of a frequency partition, 0..21.
-pub fn scalefactor_band_end(band : Int32) -> Int32 {
+pub fn scalefactor_band_end(
+  band : Int32,
+  rate~ : Int32 = active_rate.val,
+) -> Int32 {
   if band < 0 {
     0
-  } else if band < LongScalefactorBandCount - 1 {
-    long_scalefactor_starts[band + 1]
-  } else if band == LongScalefactorBandCount - 1 {
-    // sfb 20 is the last transmitted band, 342..417.
-    418
-  } else if band == LongScalefactorBandCount {
-    576
   } else {
-    576
+    let (starts, tail_start) = long_scalefactor_partition_for(rate)
+    if band < LongScalefactorBandCount - 1 {
+      starts[band + 1]
+    } else if band == LongScalefactorBandCount - 1 {
+      tail_start
+    } else {
+      576
+    }
   }
 }
 
 ///|
 /// Width of a frequency partition, 0..21.
-pub fn scalefactor_band_width(band : Int32) -> Int32 {
-  scalefactor_band_end(band) - scalefactor_band_start(band)
+pub fn scalefactor_band_width(
+  band : Int32,
+  rate~ : Int32 = active_rate.val,
+) -> Int32 {
+  scalefactor_band_end(band, rate~) - scalefactor_band_start(band, rate~)
 }
 
 ///|
 /// Frequency partition that owns a line, 0..21. Band 21 has no transmitted
 /// scalefactor but is still a distinct partition for error accounting.
-pub fn scalefactor_band_of_line(line : Int32) -> Int32 {
+pub fn scalefactor_band_of_line(
+  line : Int32,
+  rate~ : Int32 = active_rate.val,
+) -> Int32 {
   if line < 0 {
     return 0
   }
-  if line >= 418 {
+  let (starts, tail_start) = long_scalefactor_partition_for(rate)
+  if line >= tail_start {
     return 21
   }
   for band = 1; band < LongScalefactorBandCount; band = band + 1 {
-    if line < long_scalefactor_starts[band] {
+    if line < starts[band] {
       return band - 1
     }
   }

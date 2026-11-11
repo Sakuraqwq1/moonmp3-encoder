@@ -21,6 +21,67 @@ pub const SampleRate44100 : Int32 = 44100
 pub const SampleRateIndex44100 : Int32 = 0
 
 ///|
+/// Output sample rate: 32000 Hz.
+pub const SampleRate32000 : Int32 = 32000
+
+///|
+/// Layer III samplerate table index of 48000 Hz under MPEG-1.
+pub const SampleRateIndex48000 : Int32 = 1
+
+///|
+/// Output sample rate: 48000 Hz.
+pub const SampleRate48000 : Int32 = 48000
+
+///|
+/// Layer III samplerate table index of 32000 Hz under MPEG-1.
+pub const SampleRateIndex32000 : Int32 = 2
+
+///|
+/// Map a sample rate in Hz (32000, 44100, 48000) to its MPEG-1 2-bit header index.
+/// 44100 -> 0, 48000 -> 1, 32000 -> 2 (ISO/IEC 11172-3 Table 3-B.2.c). Returns -1 if unsupported.
+pub fn sample_rate_index(sample_rate : Int32) -> Int32 {
+  if sample_rate == SampleRate44100 {
+    SampleRateIndex44100
+  } else if sample_rate == SampleRate48000 {
+    SampleRateIndex48000
+  } else if sample_rate == SampleRate32000 {
+    SampleRateIndex32000
+  } else {
+    -1
+  }
+}
+
+///|
+/// MPEG-1 Layer III standard bitrates in bps for indices 0..14.
+let mpeg1_layer3_bitrates : Array[Int32] = [
+  0, 32000, 40000, 48000, 56000, 64000, 80000, 96000, 112000, 128000, 160000, 192000,
+  224000, 256000, 320000,
+]
+
+///|
+/// Map bitrate in bps (or kbps) to its MPEG-1 Layer III 4-bit header index (1..14).
+/// Returns -1 if unsupported.
+pub fn bitrate_index(bitrate : Int32) -> Int32 {
+  let bps = if bitrate < 1000 { bitrate * 1000 } else { bitrate }
+  for idx = 1; idx <= 14; idx = idx + 1 {
+    if mpeg1_layer3_bitrates[idx] == bps {
+      return idx
+    }
+  }
+  -1
+}
+
+///|
+/// Bitrate in bps for a given 4-bit header index (1..14).
+pub fn bitrate_of_index(index : Int32) -> Int32 {
+  if index >= 1 && index <= 14 {
+    mpeg1_layer3_bitrates[index]
+  } else {
+    0
+  }
+}
+
+///|
 /// Samples carried by one Layer III frame, per channel.
 pub const FrameSamples : Int32 = 1152
 

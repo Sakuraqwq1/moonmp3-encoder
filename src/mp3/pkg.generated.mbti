@@ -46,9 +46,17 @@ pub const ModeStereo : Int32 = 0
 
 pub const QuantizeOffset : Double = 0.4054
 
+pub const SampleRate32000 : Int32 = 32000
+
 pub const SampleRate44100 : Int32 = 44100
 
+pub const SampleRate48000 : Int32 = 48000
+
+pub const SampleRateIndex32000 : Int32 = 2
+
 pub const SampleRateIndex44100 : Int32 = 0
+
+pub const SampleRateIndex48000 : Int32 = 1
 
 pub const ScalefactorsInGroup1 : Int32 = 11
 
@@ -76,6 +84,10 @@ pub fn big_values_cost(Array[Int32], Int32, Int32) -> Int32
 
 pub fn big_values_needed(Array[Int32]) -> Int32
 
+pub fn bitrate_index(Int32) -> Int32
+
+pub fn bitrate_of_index(Int32) -> Int32
+
 pub fn block_window(Int32, Int32) -> Double
 
 pub fn choose_table(Array[Int32], Int32) -> Int32
@@ -88,11 +100,15 @@ pub fn count1_bits(Array[Int32]) -> Int32 raise Count1Error
 
 pub fn count1_nonzero(Array[Int32]) -> Int32
 
-pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise EncodeError
+pub fn encode(Array[Int32], Int32, Int32, bitrate? : Int32) -> Bytes raise EncodeError
+
+pub fn encode_at(Array[Int32], Int32, Int32, Int32) -> Bytes raise EncodeError
 
 pub fn encode_count1_spectrum(Int32, Int32, Array[Int32], Int32) -> Bytes raise Count1Error
 
 pub fn encode_headroom(Array[Int32]) -> Double
+
+pub fn get_active_samplerate() -> Int32
 
 pub fn global_gain_for_peak(Double, Int32) -> Int32
 
@@ -116,13 +132,15 @@ pub fn quantize_with_gain(Array[Double], Int32) -> Array[Int32]
 
 pub fn region_peak(Array[Int32], Int32, Int32) -> Int32
 
-pub fn scalefactor_band_end(Int32) -> Int32
+pub fn sample_rate_index(Int32) -> Int32
 
-pub fn scalefactor_band_of_line(Int32) -> Int32
+pub fn scalefactor_band_end(Int32, rate? : Int32) -> Int32
 
-pub fn scalefactor_band_start(Int32) -> Int32
+pub fn scalefactor_band_of_line(Int32, rate? : Int32) -> Int32
 
-pub fn scalefactor_band_width(Int32) -> Int32
+pub fn scalefactor_band_start(Int32, rate? : Int32) -> Int32
+
+pub fn scalefactor_band_width(Int32, rate? : Int32) -> Int32
 
 pub fn scalefactor_bit_count(Int32) -> Int32
 
@@ -135,6 +153,8 @@ pub fn scalefactor_group_maxima(Array[Int32]) -> (Int32, Int32)
 pub fn scalefactor_step_multiplier(Int32) -> Double
 
 pub fn scalefactor_widths(Int32) -> (Int32, Int32)
+
+pub fn set_active_samplerate(Int32) -> Unit
 
 pub fn short_block_window(Int32) -> Double
 
@@ -200,6 +220,7 @@ pub suberror Count1Error {
 
 pub suberror EncodeError {
   UnsupportedSampleRate(Int32)
+  UnsupportedBitrate(Int32)
   UnsupportedChannels(Int32)
   NotInterleaved(Int32)
   EmptyInput
