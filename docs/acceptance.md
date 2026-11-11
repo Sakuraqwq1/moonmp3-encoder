@@ -12,13 +12,15 @@
 | 4 | README 说明目标、安装、用法、示例，可复现 | README 已改为真实编码状态与实测数字，`moon add` + `encode()` 示例可直接跑 | 满足 |
 | 5 | CI 覆盖检查、构建、测试 | check（三平台）、build（native/wasm-gc）、tools（Python）共 6 个作业 | 满足 |
 | 6 | 至少一个可运行示例或最小样例 | `moon run cmd/main -- selftest` / `sine` / `silent`，CI 在跑 | 满足 |
-| 7 | 完整测试覆盖核心功能路径 | `moon test` 43 例（滤波组、长短块 MDCT/窗切换、缓存矩阵、量化器、Huffman、scalefactor、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
+| 7 | 完整测试覆盖核心功能路径 | `moon test` 52 例（滤波组、长短块 MDCT/窗切换、缓存矩阵、量化器、Huffman、3 档采样率 scalefactor 频带、14 档码率帧长、count1 提前终止、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
 | 8 | 发布到 mooncakes.io | 0.2.2 已发布（MDCT 变换表缓存优化，输出逐字节不变）；发布包与仓库一致 | 满足 |
 | 9 | OSI 许可证；移植须符合原许可证 | Apache-2.0；原创实现，未读取 LAME/shine；来源见 `docs/provenance.md` | 满足 |
 
 结论：**形式项 9/9 满足；阶段 1 的 9 条完成判据全部有实测证据**（见
-`docs/stage1-handoff.md` §2'）。当前发布版本为 0.2.2，阶段 2 的核心能力已经落地；
-后续维护保持公开 API 与已发布标签不变，修复和新能力通过后续补丁版本发布。
+`docs/stage1-handoff.md` §2'）。线上最新发布版本为 0.2.2；0.3.0 已在仓库本地就绪
+（3 档采样率 × 14 档码率 × 单/双声道 = 84 组全矩阵 + count1 提前终止），按发布
+流程待总架构师最终验收后再发版打 tag。后续维护保持公开 API 向后兼容，新能力通过
+次版本发布。
 
 ## 二、阶段 1 完成前的初审红线
 
@@ -42,12 +44,27 @@
 - [x] 至少两个独立解码器结果一致（延迟对齐后比较长度和波形）。`tools/crossdecode.py`：相关度 1.000000
 - [x] reservoir 连续多帧不越界，长序列不产生爆音。
       （39 帧实测 `main_data_begin` = 0/232/477/511…，全在 0..511；mpg123 与 ffmpeg 相关度 1.000000、差 125.7 dB；见 `docs/stage2-progress.md`）
-- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 42 例）
+- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 52 例）
 - [x] 对比同码率 LAME 的体积和 SNR，差距如实写入 README。
-      （PyAV `libmp3lame` 128 kbps mono，五个探针：28.30/27.77/28.34/13.51/17.92 dB vs 26.03/26.01/26.00/8.49/26.02 dB；满幅探针因防削顶余量为 17.92 dB，归一化到同一电平后 28.92 dB 高于 LAME；由 `tools/lame_ref.py` 复现）
+      （PyAV `libmp3lame` 128 kbps mono，五个探针：28.30/27.77/28.34/13.50/17.92 dB vs 26.03/26.01/26.00/8.49/26.02 dB；满幅探针因防削顶余量为 17.92 dB，归一化到同一电平后 28.92 dB 高于 LAME；由 `tools/lame_ref.py` 复现）
 - [x] 发布 0.2.0 或更高版本，CI 全绿，仓库与发布包一致。
       （0.2.2 于 2026-11-07 发布到 mooncakes，包含 MDCT 变换表缓存优化；
       CI 以推送后的 Actions 结果为准）
+
+## 三之二、0.3.0 能力面：多采样率与多码率
+
+- [x] MPEG-1 全部 3 档采样率（`32000` / `44100` / `48000` Hz）与全部 14 档标准
+      CBR 码率（`32`–`320` kbps）均已接入；帧头索引按 Table 3-B.2.b/c，帧长按
+      `floor(n * 144 * bitrate / samplerate)` 累积。
+      （`moon test` 覆盖索引表、三套 Table B.8 频带表、padding 与字节累积公式）
+- [x] 3 档采样率 × 14 档码率 × 单/双声道 = **84 组配置逐组实测**：
+      `python tools/rates.py` → `84 total | 84 passed | 0 blocked-by-count1 | 0 failed`。
+- [x] 此前被 576-bit/granule 地板阻塞的 26 个低码率组合全部转为通过；全零
+      granule 的 `part2_3_length` 由 576 变为 **1**（`mp3dump --strict` 0 warning）。
+- [x] 公开 API 向后兼容：旧的三参数调用 `encode(samples, 44100, 1)` 仍按
+      44.1 kHz / 128 kbps 编码；帧字节数与重建 SNR 不变（39 帧 16300 字节、
+      29.40 dB）。由于 `count1` 改用 Table A 提前终止，比特流内容与 0.2.2 不同，
+      这是 0.3.0 声明的行为变化。
 
 ## 四、验收期保持开发
 
@@ -66,4 +83,5 @@
 | 0.1.1 | 2026-11-01 | 已被替代 | 补 `.gitattributes`，CI 5/5 通过；仍是静音结构里程碑 |
 | 0.2.0 | 2026-11-03 | 已被替代 | 首个真正编码音频的版本：scalefactor、位保留区、短块/窗切换、满幅 headroom；全段 27.6–32.7 dB |
 | 0.2.1 | 2026-11-03 | 已被替代 | 仅修 `moon.mod` 描述（0.2.0 的代码未改） |
-| 0.2.2 | 2026-11-07 | 当前 | 缓存 MDCT 余弦矩阵与块窗口；本地编码耗时约降 19%，输出逐字节不变，测试增至 43 例 |
+| 0.2.2 | 2026-11-07 | 已被替代 | 缓存 MDCT 余弦矩阵与块窗口；本地编码耗时约降 19%，输出逐字节不变，测试增至 43 例 |
+| 0.3.0 | 2026-11-11 | 本地就绪，待验收后发布 | 3 档采样率 × 14 档码率 × 单/双声道 = 84 组全矩阵通过；count1 Table A 1-bit 提前终止解除 576-bit 地板；`moon test` 52 例；新增 `tools/rates.py` |

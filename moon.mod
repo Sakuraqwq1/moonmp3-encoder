@@ -3,7 +3,7 @@
 
 name = "Sakuraqwq1/moonmp3-encoder"
 
-version = "0.2.2"
+version = "0.3.0"
 
 readme = "README.md"
 
@@ -23,4 +23,4 @@ keywords = [
   "pcm",
 ]
 
-description = "Pure MoonBit MPEG-1 Layer III encoder: 44.1 kHz mono/stereo, 128 kbps CBR, polyphase filterbank and MDCT, scalefactor bands, Huffman coding, zero FFI; 27.6-32.7 dB SNR on synthetic probes."
+description = "Pure MoonBit MPEG-1 Layer III encoder: 3 sample rates 32/44.1/48 kHz x 14 CBR bitrates 32-320 kbps x mono/stereo (84 configurations), polyphase filterbank, MDCT, scalefactor bands, count1 early termination, zero FFI; 27.6-32.4 dB SNR on synthetic probes."

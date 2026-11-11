@@ -6,7 +6,9 @@ import {
 }
 
 // Values
-pub fn encode(Array[Int32], Int32, Int32) -> Bytes raise @mp3.EncodeError
+pub fn encode(Array[Int32], Int32, Int32, bitrate? : Int32) -> Bytes raise @mp3.EncodeError
+
+pub fn encode_at(Array[Int32], Int32, Int32, Int32) -> Bytes raise @mp3.EncodeError
 
 pub fn version() -> String
 
