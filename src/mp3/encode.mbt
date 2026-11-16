@@ -274,7 +274,7 @@ fn plan_unscaled(
 /// Cost falls as the gain rises (coefficients get smaller, then zero), so a
 /// binary search over the 8-bit field finds the least coarsening that fits. The
 /// search always terminates on a fitting gain because a fully zeroed granule
-/// costs 576 bits and every granule's share is larger than that.
+/// costs one count1 bit and every supported configuration can fit it.
 ///
 /// The gain search deliberately runs with all scalefactors zero. Once it has
 /// fixed the granule's gross step, `refine_scalefactors` spends whatever
@@ -318,7 +318,7 @@ fn plan_with_budget(
     return refine_scalefactors(budget, best, quantiser, block_type)
   }
   // Nothing in the window fitted; coarsen until it does. A fully zeroed granule
-  // costs 576 bits, which every granule's share exceeds, so this terminates.
+  // costs one count1 bit, which every granule's share can fit.
   let mut low = centre
   let mut high = 255
   while low < high {
@@ -383,6 +383,7 @@ fn plan_frame(
   pcm : Array[Double],
   sizer : FrameSizer,
   reservoir : MainDataReservoir,
+  peak_monitors : Array[PeakMonitor],
   area_start_bits : Int32,
 ) -> FramePlan raise EncodeError {
   let size = sizer.next_frame_size()
@@ -405,7 +406,8 @@ fn plan_frame(
   // After padding, the frame's data starts where the stream now ends.
   let start = reservoir.length
   let budget = (lag + capacity / 8) * 8
-  let share = budget / (2 * channels)
+  // part2_3_length can describe at most 4095 bits, even with a full reservoir.
+  let share = (budget / (2 * channels)).min(4095)
   let granules : Array[GranuleInfo] = []
   let w = @bits.BitWriter::new()
   let mut bits = 0
@@ -457,6 +459,9 @@ fn plan_frame(
         )
       }
       granules.push(info)
+      if !peak_monitors.is_empty() {
+        peak_monitors[channel].observe(plan, block_type)
+      }
       let scalefactor_bits = if block_type == BlockTypeShort {
         write_short_scalefactors(w, plan.scalefactors, plan.scalefac_compress)
       } else {
@@ -499,18 +504,25 @@ fn plan_frame(
 /// it once normalised. `tools/selftest.py` pins both ends — decoded peak ≤ 1.00
 /// and level loss ≤ 1.3 dB.
 pub fn encode_headroom(samples : Array[Int32]) -> Double {
-  let mut peak = 0
+  headroom_for_peak(pcm_peak(samples))
+}
+
+///|
+fn pcm_peak(samples : Array[Int32]) -> Double {
+  let mut peak = 0.0
   for sample in samples {
-    if sample.abs() > peak {
-      peak = sample.abs()
-    }
+    peak = peak.max(sample.to_double().abs())
   }
-  let normalised = peak.to_double() / 32768.0
+  peak / 32768.0
+}
+
+///|
+fn headroom_for_peak(peak : Double) -> Double {
   let target = 0.87
-  if normalised <= target {
+  if peak <= target {
     1.0
   } else {
-    target / normalised
+    target / peak
   }
 }
 
@@ -519,8 +531,8 @@ pub fn encode_headroom(samples : Array[Int32]) -> Double {
 ///
 /// A granule is marked short when its peak energy jumps well above the running
 /// average, the classic pre-echo cue. A run of short granules is framed by a
-/// start before it and a stop after it, and short runs are padded to at least
-/// one granule so a lone transient still gets its start and stop.
+/// start before it and a stop after it. Short runs separated by one granule
+/// share a short window there, leaving room for legal transitions.
 fn schedule_block_types(
   samples : Array[Int32],
   channels : Int32,
@@ -529,26 +541,20 @@ fn schedule_block_types(
   let per_channel = samples.length() / channels
   let ngranules = nframes * 2
   let types = Array::make(ngranules * channels, BlockTypeLong)
-  let granule_peak = Array::make(ngranules * channels, 0.0)
   let granule_rms = Array::make(ngranules * channels, 0.0)
   for granule = 0; granule < ngranules; granule = granule + 1 {
     for channel = 0; channel < channels; channel = channel + 1 {
       let base = granule * GranulePcm
-      let mut peak = 0.0
       let mut energy = 0.0
       for index = 0; index < GranulePcm; index = index + 1 {
         let absolute = base + index
         if absolute < per_channel {
           let value = samples[absolute * channels + channel].to_double() /
             32768.0
-          if value.abs() > peak {
-            peak = value.abs()
-          }
           energy = energy + value * value
         }
       }
       let slot = granule * channels + channel
-      granule_peak[slot] = peak
       granule_rms[slot] = @math.pow(energy / GranulePcm.to_double(), 0.5)
     }
   }
@@ -561,12 +567,7 @@ fn schedule_block_types(
       let slot = granule * channels + channel
       if seen > 0 &&
         granule_rms[slot] > running / seen.to_double() * 3.0 + 0.000001 {
-        let start_granule = if granule > 0 { granule - 1 } else { granule }
-        types[start_granule * channels + channel] = BlockTypeStart
         types[slot] = BlockTypeShort
-        if granule + 1 < ngranules {
-          types[(granule + 1) * channels + channel] = BlockTypeStop
-        }
         // Absorb the transient energy into the average so a single onset does
         // not mark every following granule as short.
         running = running + granule_rms[slot]
@@ -574,6 +575,25 @@ fn schedule_block_types(
       }
       running = running + granule_rms[slot]
       seen = seen + 1
+    }
+    // A single long granule cannot be both stop and start.
+    for granule = 1; granule + 1 < ngranules; granule = granule + 1 {
+      let slot = granule * channels + channel
+      if types[slot - channels] == BlockTypeShort &&
+        types[slot + channels] == BlockTypeShort {
+        types[slot] = BlockTypeShort
+      }
+    }
+    for granule = 0; granule < ngranules; granule = granule + 1 {
+      let slot = granule * channels + channel
+      if types[slot] == BlockTypeShort {
+        continue
+      }
+      if granule + 1 < ngranules && types[slot + channels] == BlockTypeShort {
+        types[slot] = BlockTypeStart
+      } else if granule > 0 && types[slot - channels] == BlockTypeShort {
+        types[slot] = BlockTypeStop
+      }
     }
   }
   types
@@ -603,7 +623,7 @@ pub fn encode(
   if sr_idx < 0 {
     raise UnsupportedSampleRate(sample_rate)
   }
-  let bps = if bitrate < 1000 { bitrate * 1000 } else { bitrate }
+  let bps = if bitrate > 0 && bitrate < 1000 { bitrate * 1000 } else { bitrate }
   let br_idx = bitrate_index(bps)
   if br_idx < 1 || br_idx > 14 {
     raise UnsupportedBitrate(bitrate)
@@ -619,8 +639,15 @@ pub fn encode(
   }
   let prev_rate = get_active_samplerate()
   set_active_samplerate(sample_rate)
+  defer set_active_samplerate(prev_rate)
   let per_channel = samples.length() / channels
-  let headroom = encode_headroom(samples)
+  let peak = pcm_peak(samples)
+  let headroom = headroom_for_peak(peak)
+  let peak_monitors = if peak >= 0.75 {
+    Array::makei(channels, _ => PeakMonitor::new())
+  } else {
+    []
+  }
   let nframes = (per_channel + FrameSamples - 1) / FrameSamples
   let block_types = schedule_block_types(samples, channels, nframes)
   let mode = if channels == 1 { ModeMono } else { ModeStereo }
@@ -640,10 +667,21 @@ pub fn encode(
   for frame = 0; frame < nframes; frame = frame + 1 {
     let plan = plan_frame(
       frame, channels, per_channel, samples, headroom, block_types, analysis, pcm,
-      sizer, reservoir, area_start,
+      sizer, reservoir, peak_monitors, area_start,
     )
     area_start = area_start + plan.size * 8 - 32 - side_bits
     plans.push(plan)
+  }
+  // One global adjustment keeps both channels and every overlap at the same
+  // level. A gain step changes amplitude by 2^(1/4) without changing bit costs.
+  let mut output_peak = 0.0
+  for monitor in peak_monitors {
+    output_peak = output_peak.max(monitor.peak)
+  }
+  let gain_reduction = if output_peak > 0.999 {
+    (4.0 * @math.log2(output_peak / 0.999)).ceil().to_int()
+  } else {
+    0
   }
   // Pass two: cut the stream into the areas, which follow one another at the
   // frame sizes the CBR sizer picked.
@@ -651,13 +689,20 @@ pub fn encode(
     let plan = plans[frame]
     let main_data_begin = reservoir.placed() / 8 - plan.start / 8
     if main_data_begin < 0 || main_data_begin > 511 {
-      set_active_samplerate(prev_rate)
       raise AnalysisFailed(frame)
     }
     let w = @bits.BitWriter::new()
     write_header(w, br_idx, sr_idx, mode, plan.padding)
     let scfsi = Array::make(channels, 0)
-    write_side_info(w, channels, main_data_begin, scfsi, plan.granules)
+    let granules = if gain_reduction == 0 {
+      plan.granules
+    } else {
+      plan.granules.map(granule => {
+        ..granule,
+        global_gain: (granule.global_gain - gain_reduction).max(0),
+      })
+    }
+    write_side_info(w, channels, main_data_begin, scfsi, granules)
     let capacity = plan.size * 8 - 32 - side_bits
     reservoir.take(w, capacity)
     let bytes = w.finish()
@@ -665,7 +710,6 @@ pub fn encode(
       out.write_byte(bytes[index])
     }
   }
-  set_active_samplerate(prev_rate)
   out.to_bytes()
 }
 

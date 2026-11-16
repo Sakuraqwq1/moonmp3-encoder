@@ -9,7 +9,7 @@
 /// or 48000 Hz — and `bitrate~` one of the fourteen standard CBR bitrates,
 /// 32..320 kbps. `bitrate~` defaults to 128 kbps, so the original three-argument
 /// call `encode(samples, 44100, 1)` keeps working unchanged; pass it by label to
-/// pick another bitrate: `encode(samples, 48000, 2, bitrate~ = 192)`. Both kbps
+/// pick another bitrate: `encode(samples, 48000, 2, bitrate=192)`. Both kbps
 /// (`192`) and bit-per-second (`192000`) forms are accepted; anything outside
 /// the standard table is rejected with `UnsupportedBitrate`.
 ///
@@ -22,7 +22,7 @@
 /// per-band scalefactor quantisation, big_values Huffman tables and a count1
 /// tail that terminates an all-zero high-frequency region with a single bit.
 /// Consecutive frames share the standard bit reservoir, and a continuous
-/// headroom rule prevents near-full-scale inputs from clipping after decoding.
+/// headroom rule and reconstructed peak check reduce decoder overshoot.
 pub fn encode(
   samples : Array[Int32],
   sample_rate : Int32,
@@ -48,5 +48,5 @@ pub fn encode_at(
 /// Version of the `moonmp3-encoder` module.
 /// Keep in sync with the `version` field in `moon.mod`.
 pub fn version() -> String {
-  "0.3.0"
+  "0.3.1"
 }

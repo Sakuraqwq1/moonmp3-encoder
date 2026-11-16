@@ -64,6 +64,7 @@ FREQS = [440, 560, 620, 640, 655, 670, 685, 700, 720, 760, 880, 1000,
 
 
 def main(argv: list[str]) -> int:
+    os.makedirs(os.path.dirname(REF), exist_ok=True)
     correlate = "--correlate" in argv
     print(f"{'freq':>6} {'band':>4} {'SNR dB':>8} {'dominant':>9}  bar")
     worst = (1e9, 0.0)

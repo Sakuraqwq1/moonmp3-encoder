@@ -174,3 +174,20 @@ test "scalefactor : short compress prices 18 values per group" {
   overflow[18] = 8
   assert_eq(short_scalefactor_compress(overflow), -1)
 }
+
+///|
+test "scalefactor : short reorder and field lookup follow the stream sample rate" {
+  let prev_rate = get_active_samplerate()
+  defer set_active_samplerate(prev_rate)
+  for case in [(32000, 180, 142), (44100, 136, 134), (48000, 126, 130)] {
+    let (rate, tail, index) = case
+    set_active_samplerate(rate)
+    assert_eq(short_scalefactor_band_start(12), tail)
+    assert_eq(short_scalefactor_band_of_frequency(tail - 1), 11)
+    assert_eq(short_scalefactor_band_of_frequency(tail), 12)
+    // Line 42 of window 1 falls at different bitstream positions.
+    assert_eq(short_huffman_index(7, 1, 0), index)
+    assert_eq(short_scalefactor_of_line(tail * 3 - 1), 35)
+    assert_eq(short_scalefactor_of_line(tail * 3), 36)
+  }
+}

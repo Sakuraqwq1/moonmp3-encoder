@@ -36,7 +36,7 @@ fn main {
       "  sine       encode a generated sine (frames freqs amp_pct channels)",
     )
     println(
-      "  encode     encode interleaved int16 PCM given as base64 (pcm channels)",
+      "  encode     encode interleaved int16 PCM given as base64 (pcm [channels] [rate] [bitrate])",
     )
     println("  lines      debug: dump one granule's 576 analysis lines")
     println(
@@ -291,6 +291,8 @@ fn run_encode(args : Array[String]) -> Unit {
     println("ERROR: channels must be 1 or 2")
     return
   }
+  let rate = parse_count(args, 4, 44100)
+  let bitrate = parse_count(args, 5, 128000)
   let payload = @base64.decode(args[2][:]) catch {
     (_ : @base64.Malformed) => {
       println("ERROR: payload is not valid base64")
@@ -309,14 +311,14 @@ fn run_encode(args : Array[String]) -> Unit {
     let value = low | (high << 8)
     samples[index] = if value >= 32768 { value - 65536 } else { value }
   }
-  let mp3 = @encoder.encode(samples, 44100, channels) catch {
+  let mp3 = @encoder.encode(samples, rate, channels, bitrate~) catch {
     (_ : @mp3.EncodeError) => {
       println("ERROR: encode failed")
       return
     }
   }
   println(
-    "rate=44100 channels=\{channels} samples=\{count / channels} bytes=\{mp3.length()}",
+    "rate=\{rate} channels=\{channels} samples=\{count / channels} bytes=\{mp3.length()}",
   )
   println("MP3BEGIN")
   println(@base64.encode(mp3[:]))

@@ -16,6 +16,7 @@ import io
 import json
 import math
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -397,13 +398,15 @@ class AnalysisTests(unittest.TestCase):
 class BoundaryMatrixTests(unittest.TestCase):
     """Stage 2's boundary matrix: block edges, full scale, transients, decoders."""
 
-    def _encode_pcm(self, samples, channels):
+    def _encode_pcm(self, samples, channels, rate=44100, bitrate=128):
         import base64
 
         payload = base64.b64encode(
-            np.clip(np.round(samples), -32768, 32767).astype(np.int16).tobytes()
+            np.clip(np.round(samples), -32768, 32767).astype("<i2").tobytes()
         )
-        return mp3lab.extract_payload(mp3lab.run_cli("encode", payload.decode(), str(channels)))
+        return mp3lab.extract_payload(
+            mp3lab.run_cli("encode", payload.decode(), str(channels), str(rate), str(bitrate))
+        )
 
     def test_block_edges_1151_1152_1153(self):
         # One sample either side of the 1152-sample frame is where an off-by-one
@@ -461,39 +464,64 @@ class BoundaryMatrixTests(unittest.TestCase):
                 self.assertLessEqual(loss_db, 1.3)
                 self.assertGreaterEqual(loss_db, 0.0)
 
-    def test_transient_switches_to_short_windows(self):
-        # An isolated impulse must trigger start/short/stop window switching, and
-        # the resulting stream must still decode cleanly in two decoders.
-        import base64
-
-        impulse = np.zeros(7938)
-        impulse[4000] = 0.9
-        payload = self._encode_pcm(impulse, 1)
-        report = mp3dump.analyze(
-            self._write_mp3("impulse", payload)
-        )
-        self.assertEqual(report["warnings"], [])
-        block_types = [
-            (g["window_switching"], g["block_type"])
-            for f in report["frames"]
-            for g in f["side_info"]["granules"]
-        ]
-        self.assertIn((1, 2), block_types)
-        self.assertIn((1, 1), block_types)
-        self.assertIn((1, 3), block_types)
-        data, _ = mp3lab.decode_mp3(payload)
-        self.assertTrue(np.all(np.isfinite(data)))
+    def test_full_scale_broadband_and_onsets_do_not_overshoot(self):
         import crossdecode
 
-        agreed = crossdecode.compare(payload)
-        self.assertTrue(agreed["agree"], agreed)
+        for rate in (32000, 44100, 48000):
+            for channels in (1, 2):
+                source = np.random.default_rng(22).integers(
+                    -32768, 32768, (5 * 1152, channels), dtype="<i2"
+                )
+                for bitrate, onset in ((32, False), (320, False), (128, True)):
+                    with self.subTest(rate=rate, channels=channels, bitrate=bitrate):
+                        pcm = source.copy()
+                        if onset:
+                            pcm[:3 * 576] = 0
+                        payload = self._encode_pcm(pcm.reshape(-1), channels, rate, bitrate)
+                        for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
+                            audio, decoded_rate = decode(payload)
+                            self.assertEqual(decoded_rate, rate)
+                            self.assertEqual(audio.shape, pcm.shape)
+                            self.assertTrue(np.all(np.isfinite(audio)))
+                            peak = float(np.max(np.abs(audio)))
+                            self.assertGreater(peak, 0.01)
+                            self.assertLessEqual(peak, 1.0)
 
-    def _write_mp3(self, name, payload):
-        folder = tempfile.mkdtemp(prefix="moonmp3-impulse-")
-        path = os.path.join(folder, f"{name}.mp3")
-        with open(path, "wb") as handle:
-            handle.write(payload)
-        return path
+    def test_transient_switches_to_short_windows(self):
+        import crossdecode
+
+        for rate in (32000, 44100, 48000):
+            for channels in (1, 2):
+                with self.subTest(rate=rate, channels=channels):
+                    # Consecutive onsets after silence must share one start/stop.
+                    samples = np.zeros((5 * 1152, channels))
+                    onset = 6 * 576
+                    index = np.arange(2 * 576)
+                    for channel in range(channels):
+                        frequency = 2300 + 550 * channel
+                        samples[onset:onset + index.size, channel] = (
+                            16000 * np.sin(2 * np.pi * frequency * index / rate)
+                        )
+                    payload = self._encode_pcm(samples.reshape(-1), channels, rate)
+                    with tempfile.TemporaryDirectory(prefix="moonmp3-onset-") as folder:
+                        path = Path(folder) / "onset.mp3"
+                        path.write_bytes(payload)
+                        report = mp3dump.analyze(path)
+                    self.assertEqual(report["warnings"], [])
+                    granules = [
+                        g["block_type"]
+                        for frame in report["frames"]
+                        for g in frame["side_info"]["granules"]
+                    ]
+                    for channel in range(channels):
+                        self.assertEqual(granules[channel::channels], [0] * 5 + [1, 2, 2, 3, 0])
+                    data, decoded_rate = mp3lab.decode_mp3(payload)
+                    self.assertEqual(decoded_rate, rate)
+                    self.assertEqual(data.shape, samples.shape)
+                    self.assertTrue(np.all(np.isfinite(data)))
+                    self.assertGreater(float(np.max(np.abs(data))), 0.01)
+                    agreed = crossdecode.compare(payload)
+                    self.assertTrue(agreed["agree"], agreed)
 
     def test_decoder_model_reproduces_libsndfile(self):
         # tools/decoder_ref.py models the decoder chain stage by stage. If it ever

@@ -12,15 +12,12 @@
 | 4 | README 说明目标、安装、用法、示例，可复现 | README 已改为真实编码状态与实测数字，`moon add` + `encode()` 示例可直接跑 | 满足 |
 | 5 | CI 覆盖检查、构建、测试 | check（三平台）、build（native/wasm-gc）、tools（Python）共 6 个作业 | 满足 |
 | 6 | 至少一个可运行示例或最小样例 | `moon run cmd/main -- selftest` / `sine` / `silent`，CI 在跑 | 满足 |
-| 7 | 完整测试覆盖核心功能路径 | `moon test` 52 例（滤波组、长短块 MDCT/窗切换、缓存矩阵、量化器、Huffman、3 档采样率 scalefactor 频带、14 档码率帧长、count1 提前终止、边界）；`tools/selftest.py` 34 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
-| 8 | 发布到 mooncakes.io | 0.2.2 已发布（MDCT 变换表缓存优化，输出逐字节不变）；发布包与仓库一致 | 满足 |
+| 7 | 完整测试覆盖核心功能路径 | `moon test` 53 例（滤波组、长短块 MDCT/窗切换、缓存矩阵、量化器、Huffman、3 档采样率 scalefactor 频带、14 档码率帧长、count1 提前终止、边界）；`tools/selftest.py` 35 例（含分析层逐线参考、闭环 SNR、频谱、帧网格、近满幅不过冲、瞬态短块）；`verify.py structure` 12 例 | 满足 |
+| 8 | 发布到 mooncakes.io | 已发布 0.3.0，下载包与发布标签对应 | 满足 |
 | 9 | OSI 许可证；移植须符合原许可证 | Apache-2.0；原创实现，未读取 LAME/shine；来源见 `docs/provenance.md` | 满足 |
 
 结论：**形式项 9/9 满足；阶段 1 的 9 条完成判据全部有实测证据**（见
-`docs/stage1-handoff.md` §2'）。线上最新发布版本为 0.2.2；0.3.0 已在仓库本地就绪
-（3 档采样率 × 14 档码率 × 单/双声道 = 84 组全矩阵 + count1 提前终止），按发布
-流程待总架构师最终验收后再发版打 tag。后续维护保持公开 API 向后兼容，新能力通过
-次版本发布。
+`docs/stage1-handoff.md` §2'）。0.3.0 已发布。2026-11-16 收到初审通过通知。验收维护以提交版申报书为准。
 
 ## 二、阶段 1 完成前的初审红线
 
@@ -30,7 +27,7 @@
 - [x] 主频/声道/长度正确，不只是“有声音”（8 个频点偏差 ≤0.12 Hz；单/立体声长度与声道数逐一核对）。
 - [x] 单声道和立体声都通过，`mp3dump --strict` 无 warning（10 个 fixture 全部 strict 通过）。
 - [x] 帧网格仍是精确 128 kbps CBR，`verify.py structure` 不回归（200 帧 83591 字节 = 累积公式值）。
-- [x] 有至少一组可复现的 SNR 数据和对应 fixture（440 Hz 29.40 dB @延迟 1057；`tools/sweep_snr.py` 全段 27.60–32.44 dB）。
+- [x] 有至少一组可复现的 SNR 数据和对应 fixture（本轮复测 440 Hz 29.32 dB，延迟 1057 个采样，23 个探针为 27.60–32.73 dB）。
 - [x] README 更新为真实编码命令，不再写着“主数据全为零”。
 - [ ] 申报书由本人撰写，功能声明集中为单章节，明确边界和非目标。**（本人任务）**
 - [ ] 重新确认生态中仍无 MP3 编码器，引用可查的搜索证据。**（本人任务；仓库里只有 2026-11-01 的检索记录）**
@@ -40,16 +37,15 @@
 - [x] 正弦 SNR ≥ 20 dB，音乐样本 SNR ≥ 15 dB；数值附参考文件和解码器。
       （正弦全段 27.6–32.7 dB；multitone 28.7 dB；见 `docs/stage2-progress.md`，解码器 libsndfile/mpg123，延迟 1057）
 - [x] 单/双声道、`1152±1`、静音、满幅、瞬态、长音频矩阵通过。
-      （`tools/selftest.py` 34 例；输入峰值 50–100 % 时满幅解码峰值均 ≤1.00，过冲已由连续 headroom 消除，满幅电平损失 ≤1.3 dB）
+      （`tools/selftest.py` 同时检查满幅正弦、宽带噪声和宽带瞬态的解码峰值。满幅正弦的电平损失 ≤1.3 dB）
 - [x] 至少两个独立解码器结果一致（延迟对齐后比较长度和波形）。`tools/crossdecode.py`：相关度 1.000000
 - [x] reservoir 连续多帧不越界，长序列不产生爆音。
       （39 帧实测 `main_data_begin` = 0/232/477/511…，全在 0..511；mpg123 与 ffmpeg 相关度 1.000000、差 125.7 dB；见 `docs/stage2-progress.md`）
-- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 52 例）
+- [x] 核心用例进入 `moon test`，评委一条命令能看到通过。（`moon test` 53 例）
 - [x] 对比同码率 LAME 的体积和 SNR，差距如实写入 README。
       （PyAV `libmp3lame` 128 kbps mono，五个探针：28.30/27.77/28.34/13.50/17.92 dB vs 26.03/26.01/26.00/8.49/26.02 dB；满幅探针因防削顶余量为 17.92 dB，归一化到同一电平后 28.92 dB 高于 LAME；由 `tools/lame_ref.py` 复现）
 - [x] 发布 0.2.0 或更高版本，CI 全绿，仓库与发布包一致。
-      （0.2.2 于 2026-11-07 发布到 mooncakes，包含 MDCT 变换表缓存优化；
-      CI 以推送后的 Actions 结果为准）
+      （0.3.0 于 2026-11-11 发布到 Mooncakes；CI 以对应提交的 Actions 结果为准）
 
 ## 三之二、0.3.0 能力面：多采样率与多码率
 
@@ -58,7 +54,7 @@
       `floor(n * 144 * bitrate / samplerate)` 累积。
       （`moon test` 覆盖索引表、三套 Table B.8 频带表、padding 与字节累积公式）
 - [x] 3 档采样率 × 14 档码率 × 单/双声道 = **84 组配置逐组实测**：
-      `python tools/rates.py` → `84 total | 84 passed | 0 blocked-by-count1 | 0 failed`。
+      `python tools/rates.py` 检查逐帧 CBR 和位保留区边界，并要求 mpg123 与 FFmpeg 均成功解码。
 - [x] 此前被 576-bit/granule 地板阻塞的 26 个低码率组合全部转为通过；全零
       granule 的 `part2_3_length` 由 576 变为 **1**（`mp3dump --strict` 0 warning）。
 - [x] 公开 API 向后兼容：旧的三参数调用 `encode(samples, 44100, 1)` 仍按
@@ -84,4 +80,4 @@
 | 0.2.0 | 2026-11-03 | 已被替代 | 首个真正编码音频的版本：scalefactor、位保留区、短块/窗切换、满幅 headroom；全段 27.6–32.7 dB |
 | 0.2.1 | 2026-11-03 | 已被替代 | 仅修 `moon.mod` 描述（0.2.0 的代码未改） |
 | 0.2.2 | 2026-11-07 | 已被替代 | 缓存 MDCT 余弦矩阵与块窗口；本地编码耗时约降 19%，输出逐字节不变，测试增至 43 例 |
-| 0.3.0 | 2026-11-11 | 本地就绪，待验收后发布 | 3 档采样率 × 14 档码率 × 单/双声道 = 84 组全矩阵通过；count1 Table A 1-bit 提前终止解除 576-bit 地板；`moon test` 52 例；新增 `tools/rates.py` |
+| 0.3.0 | 2026-11-11 | 已发布 | 3 档采样率 × 14 档码率 × 单/双声道 = 84 组全矩阵通过；count1 Table A 1-bit 提前终止解除 576-bit 地板；`moon test` 52 例；新增 `tools/rates.py` |

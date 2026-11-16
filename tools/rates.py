@@ -4,15 +4,9 @@
 Covers 3 sample rates (32000, 44100, 48000 Hz) x 14 bitrates (32..320 kbps)
 x mono/stereo channels (1, 2) = 84 combinations.
 
-For each combination:
-  1. Generate audio using `moon run cmd/main -- gen <rate> <bitrate> <ch> <frames> <freq>`.
-  2. If blocked by count1 bit-budget floor (low bitrate), report `blocked-by-count1`.
-  3. Decode with libsndfile (`soundfile` via `decode_mp3`).
-  4. Assert:
-     - Exact byte length equals `floor(n * 144 * bitrate / samplerate)`.
-     - Decoded sample rate and channel count match.
-     - Decoded frame count equals `ceil(samples / 1152)`.
-     - Decoded sample length matches expected samples (within encoder delay bounds).
+For each combination, encode a tone, check every frame's MPEG version,
+CBR padding and channel mode, then check the rate, channels, sample count
+and finite non-silent output with both mpg123 and FFmpeg.
 
 Usage:
     python tools/rates.py
@@ -24,11 +18,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import numpy as np
+
+from crossdecode import decode_with_ffmpeg
+from mp3dump import parse_header, parse_side_info
 from mp3lab import ToolError, decode_mp3, extract_payload, run_cli
 
 RATES = [32000, 44100, 48000]
@@ -43,7 +40,6 @@ DEFAULT_FRAMES = 4
 def test_combination(rate: int, bitrate: int, channels: int, frames: int = DEFAULT_FRAMES) -> dict:
     expected_bytes = frames * 144 * bitrate // rate
     expected_samples = frames * 1152
-    expected_frames = frames
 
     case = {
         "rate": rate,
@@ -59,58 +55,52 @@ def test_combination(rate: int, bitrate: int, channels: int, frames: int = DEFAU
     }
 
     try:
-        stdout = run_cli("gen", str(rate), str(bitrate), str(channels), str(frames), "440")
-    except ToolError as exc:
-        msg = str(exc)
-        if "huffman failed" in msg or "analysis failed" in msg:
-            case["status"] = "blocked-by-count1"
-            case["detail"] = "count1 576-bit budget floor"
-            return case
-        case["status"] = "FAIL"
-        case["detail"] = f"CLI error: {msg}"
-        return case
+        payload = extract_payload(
+            run_cli("gen", str(rate), str(bitrate), str(channels), str(frames), "440")
+        )
+        case["bytes"] = len(payload)
+        if len(payload) != expected_bytes:
+            raise ToolError(f"byte count {len(payload)} != expected {expected_bytes}")
 
-    if "ERROR: huffman failed" in stdout or "ERROR: analysis failed" in stdout:
-        case["status"] = "blocked-by-count1"
-        case["detail"] = "count1 576-bit budget floor"
-        return case
+        offset = 0
+        area_start = 0
+        previous_data_end = 0
+        mode = 3 if channels == 1 else 0
+        for frame in range(frames):
+            header = parse_header(payload, offset)
+            end = (frame + 1) * 144 * bitrate // rate
+            if (
+                header is None
+                or header["version"] != 3
+                or header["bitrate"] != bitrate
+                or header["samplerate"] != rate
+                or header["mode"] != mode
+                or header["size"] != end - offset
+            ):
+                raise ToolError(f"frame {frame}: invalid MPEG-1 CBR header at byte {offset}")
+            side_offset = offset + 4 + (0 if header["protection"] else 2)
+            side = parse_side_info(payload, side_offset, channels)
+            data_start = (area_start - side["main_data_begin"]) * 8
+            area_start += end - side_offset - header["side_size"]
+            data_end = data_start + sum(g["part2_3_length"] for g in side["granules"])
+            if data_start < previous_data_end or data_end > area_start * 8:
+                raise ToolError(f"frame {frame}: main data exceeds its reservoir bounds")
+            previous_data_end = data_end
+            offset = end
 
-    try:
-        payload = extract_payload(stdout)
+        for name, decode in (("mpg123", decode_mp3), ("FFmpeg", decode_with_ffmpeg)):
+            try:
+                data, dec_rate = decode(payload)
+            except Exception as exc:
+                raise ToolError(f"{name} decode error: {exc}") from exc
+            if dec_rate != rate or data.shape != (expected_samples, channels):
+                raise ToolError(f"{name}: decoded {dec_rate} Hz and shape {data.shape}")
+            if not np.isfinite(data).all() or not np.any(data):
+                raise ToolError(f"{name}: decoded tone is non-finite or silent")
+        case["decoded_samples"] = expected_samples
+        case["decoded_frames"] = frames
     except ToolError as exc:
-        case["status"] = "blocked-by-count1"
         case["detail"] = str(exc)
-        return case
-
-    case["bytes"] = len(payload)
-    if len(payload) != expected_bytes:
-        case["status"] = "FAIL"
-        case["detail"] = f"byte count {len(payload)} != expected {expected_bytes}"
-        return case
-
-    try:
-        data, dec_rate = decode_mp3(payload)
-    except Exception as exc:
-        case["status"] = "FAIL"
-        case["detail"] = f"decode error: {exc}"
-        return case
-
-    case["decoded_samples"] = int(data.shape[0])
-    case["decoded_frames"] = math.ceil(data.shape[0] / 1152)
-
-    if dec_rate != rate:
-        case["status"] = "FAIL"
-        case["detail"] = f"decoded rate {dec_rate} != expected {rate}"
-        return case
-
-    if data.shape[1] != channels:
-        case["status"] = "FAIL"
-        case["detail"] = f"decoded channels {data.shape[1]} != expected {channels}"
-        return case
-
-    if data.shape[0] != expected_samples:
-        case["status"] = "FAIL"
-        case["detail"] = f"decoded samples {data.shape[0]} != expected {expected_samples}"
         return case
 
     case["status"] = "PASS"
@@ -145,17 +135,19 @@ def main():
     parser.add_argument("--frames", type=int, default=DEFAULT_FRAMES, help="frames per case (default 4)")
     args = parser.parse_args()
 
+    if args.frames < 2:
+        parser.error("--frames must be at least 2 for independent decoder validation")
+
     results = run_matrix(frames=args.frames)
 
     passed = sum(1 for r in results if r["status"] == "PASS")
-    blocked = sum(1 for r in results if r["status"] == "blocked-by-count1")
-    failed = sum(1 for r in results if r["status"] == "FAIL")
+    failed = len(results) - passed
 
     if args.json:
         report = {
             "total": len(results),
             "passed": passed,
-            "blocked_by_count1": blocked,
+            "blocked_by_count1": 0,
             "failed": failed,
             "results": results,
         }
@@ -163,9 +155,9 @@ def main():
     else:
         print_table(results)
         print("-" * 75)
-        print(f"Summary: {len(results)} total | {passed} passed | {blocked} blocked-by-count1 | {failed} failed")
+        print(f"Summary: {len(results)} total | {passed} passed | 0 blocked-by-count1 | {failed} failed")
 
-    return 1 if failed > 0 else 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -68,10 +68,12 @@ CLI 没有文件系统绑定：所有数据从命令行进出，MP3 用 base64 �
 ```bash
 moon run cmd/main -- sine 16 440 50 1          # 生成并编码 440 Hz 正弦，16 帧，50%，单声道
 moon run cmd/main -- sine 16 440,660 50 2      # 左右声道分别 440 / 660 Hz
-moon run cmd/main -- encode <base64 pcm> 1     # 编码外部交织 int16 PCM
+moon run cmd/main -- encode <base64 pcm> 2 48000 192  # 48 kHz、192 kbps 双声道
 moon run cmd/main -- tone 16 12,13 206 1       # 调试：固定 count1 频谱（不走分析路径）
 moon run cmd/main -- lines 440 50 4 6          # 调试：打印第 6 个 granule 的 576 条频线
 ```
+
+`encode` 的声道数、采样率和码率可省略，默认 1 声道、44.1 kHz、128 kbps。
 
 `sine` / `lines` 需要的信号在进程内生成，因此可以任意长；`encode` 的 payload 走
 命令行参数，Windows 单条命令约 32k 字符，实测上限约 0.2 秒单声道。需要更长的
@@ -317,6 +319,7 @@ python tools/analysis_ref.py --self
 python tools/analysis_ref.py --compare --freq 440
 python tools/selftest.py
 python tools/verify.py structure
+python tools/rates.py
 ```
 
-CI 会执行同一组检查；`tools (python)` 作业覆盖发布预检、素材生成、环境自检、工具自测和结构验证。
+CI 会执行同一组检查；`tools (python)` 作业覆盖发布预检、素材生成、环境自检、工具自测、结构验证和 84 组参数的双解码器验证。

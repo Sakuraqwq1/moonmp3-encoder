@@ -4,7 +4,7 @@
 
 纯 MoonBit 实现的**通用 MP3 编码器**：把 PCM 采样写成 MPEG-1 Layer III 流，覆盖 MPEG-1 全部 3 档采样率、14 档标准 CBR 码率与单/双声道，共 **84 组标准编码配置**。
 
-> 状态：**通用多采样率 / 多码率编码可用**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长/短块 MDCT 与窗切换、big_values + count1（Table A 提前终止）Huffman、`global_gain` 搜索、32/44.1/48 kHz 三套 21 带 scalefactor band、瞬态短块切换与近满幅 headroom 都已就绪并经外部验证；3 × 14 × 2 = **84 组配置 100% 编码与独立解码通过**。分析层是**已验证解码器链的逆**（无量化闭环白噪声 84.44 dB），全频段端到端 SNR **27.60–32.44 dB**（440 Hz 29.40 dB），同码率对比 LAME 128 kbps 在正弦/多音/扫频/白噪声四个探针上优于 LAME，满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB，归一到同一电平后 28.92 dB 高于 LAME）。具体版本与变更见 [CHANGELOG](CHANGELOG.md)。
+> 状态：**通用多采样率 / 多码率编码可用**。帧头、边信息、CBR 帧尺寸控制、多相分析滤波器组、长/短块 MDCT 与窗切换、big_values + count1（Table A 提前终止）Huffman、`global_gain` 搜索、32/44.1/48 kHz 三套 21 带 scalefactor band、瞬态短块切换与近满幅 headroom 都已就绪并经外部验证；3 × 14 × 2 = **84 组配置 100% 编码与独立解码通过**。分析层是**已验证解码器链的逆**（无量化闭环白噪声 84.44 dB），440 Hz–12 kHz 的 23 个正弦探针端到端 SNR **27.60–32.73 dB**（440 Hz 29.32 dB），同码率对比 LAME 128 kbps 在正弦/多音/扫频/白噪声四个探针上优于 LAME，满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB，归一到同一电平后 28.92 dB 高于 LAME）。具体版本与变更见 [CHANGELOG](CHANGELOG.md)。
 
 ## 为什么需要它
 
@@ -20,40 +20,54 @@ MoonBit 生态里已有纯 MoonBit 的 MP3 **解码器**（`enanandesu/mp3`）�
 - **声道：单声道 / 双声道立体声**
 - 合计 **3 档采样率 × 14 档码率 × 单/双声道 = 84 组标准编码配置**，逐组实测编码并由独立解码器解码校验通过（`python tools/rates.py`）
 - 长块 + 瞬态短块/窗切换（`block_type` 0/1/2/3），窗与 MDCT 余弦矩阵跨帧缓存
-- 采样率自适应的 scalefactor band：Table B.8.a（32 kHz）、B.8.b（44.1 kHz）、B.8.c（48 kHz）三套 21 带长块边界
+- 采样率自适应的 scalefactor band：Table B.8.a（32 kHz）、B.8.b（44.1 kHz）、B.8.c（48 kHz）三套 21 带长块与 12 带短块边界
 - 15 张 `big_values` Huffman 表 + `count1`（Table A）动态零尾截断：全零 granule 的最小编码开销从 576 bit 降到 **1 bit**
-- 跨帧位保留区（`main_data_begin`）与连续 headroom 防削顶
+- 跨帧位保留区（`main_data_begin`）与近满幅输入的连续衰减
 - 明确不做：MP3 解码（生态已有）、MPEG-2 / MPEG-2.5 半采样率（8–24 kHz）、VBR / 联合立体声、复杂心理声学掩蔽模型、播放与设备 IO
 
 ## 用法
 
-```
+在已有的 MoonBit 模块中安装依赖。
+
+```bash
 moon add Sakuraqwq1/moonmp3-encoder
 ```
 
+在使用它的目录下，将依赖加入 `moon.pkg` 的测试导入。
+
+```moonbit
+import {
+  "Sakuraqwq1/moonmp3-encoder" @moonmp3_encoder,
+} for "test"
 ```
-// 交织的有符号 16-bit PCM
-let samples : Array[Int32] = [0, 0, 100, -100]
 
-// 默认 128 kbps、44100 Hz（旧版三参数调用原样可用）
-let a : Bytes = @moonmp3_encoder.encode(samples, 44100, 2)
+将以下示例保存为 `encode_test.mbt`，运行 `moon test`。
 
-// 指定码率：标签参数，kbps（192）与 bps（192000）两种写法都接受
-let b : Bytes = @moonmp3_encoder.encode(samples, 48000, 2, bitrate~ = 192)
-
-// 位置参数入口，等价写法
-let c : Bytes = @moonmp3_encoder.encode_at(samples, 32000, 1, 64000)
+```moonbit
+test "encode signed 16-bit PCM" {
+  let samples : Array[Int32] = [0, 0, 100, -100]
+  let a = @moonmp3_encoder.encode(samples, 44100, 2)
+  let b = @moonmp3_encoder.encode(samples, 48000, 2, bitrate=192)
+  let c = @moonmp3_encoder.encode_at(samples, 32000, 1, 64000)
+  assert_eq(a.length(), 417)
+  assert_eq(b.length(), 576)
+  assert_eq(c.length(), 288)
+}
 ```
+
+采样按声道交织，取值范围为 `[-32768, 32767]`。码率参数可用 kbps（如 `192`）或 bps（如 `192000`），省略时为 128 kbps。
 
 `sample_rate` 只接受 `32000` / `44100` / `48000`，`bitrate` 只接受上表 14 档标准值，其余参数以 `UnsupportedSampleRate` / `UnsupportedBitrate` / `UnsupportedChannels` 拒绝——非法参数不会静默产出不合规的流。
 
-> 核心声学与技术指标：稳态音调主频偏差 ≤0.12 Hz、全频段整段 SNR 27.60–32.44 dB；正弦/多音/扫频/白噪声四个探针优于同码率 LAME；满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB），归一到同一电平后 28.92 dB 高于 LAME；已接入采样率自适应的 scalefactor band、位保留区和瞬态短块切换，输入峰值 50–100 % 时解码峰值全部严格保持在 ≤1.00 以内（代价是满幅输出电平低约 1.2 dB）。
+> 核心声学与技术指标：稳态音调主频偏差 ≤0.12 Hz、扫频探针 SNR 27.60–32.73 dB；正弦/多音/扫频/白噪声四个探针优于同码率 LAME；满幅探针因保留约 1 dB 防削顶余量低于 LAME（17.9 vs 26.0 dB），归一到同一电平后 28.92 dB 高于 LAME；已接入采样率自适应的 scalefactor band、位保留区和瞬态短块切换，44.1 kHz / 128 kbps 的 440 Hz 单声道满幅正弦回归用例解码峰值 ≤1.00，输出电平低约 1.2 dB。
 
 ### 质量边界
 
 - 本项目**没有心理声学掩蔽模型**：位分配以固定 SNR 判据和位预算收敛为目标，不按人耳掩蔽曲线丢弃"听不见"的成分。因此"支持 32–320 kbps 全档"是**格式与参数覆盖**的声明，不等于音质对标 LAME。
-- 纯音探针上 SNR 与码率基本无关：44.1 kHz 单声道 440 Hz 在 32–320 kbps 全部 14 档实测均为 **29.40 dB**（编码器按目标信噪比收敛后不再花掉多余预算；多出来的位变成帧内填充/保留区，不会自动变成更高的重建精度）。
-- 32 kHz 与 48 kHz 单声道 440 Hz 实测 **30.09 dB / 29.10 dB**；全频段扫频（440 Hz–12 kHz，44.1 kHz / 128 kbps）**27.60–32.44 dB**，最差点在 4 kHz。
+- 纯音探针上 SNR 与码率基本无关：此前的 44.1 kHz 单声道 440 Hz 探针在 32–320 kbps 全部 14 档测得 **29.40 dB**（编码器按目标信噪比收敛后不再花掉多余预算；多出来的位变成帧内填充/保留区，不会自动变成更高的重建精度）。
+- 32 kHz 与 48 kHz 单声道 440 Hz 实测 **30.09 dB / 29.10 dB**；全频段扫频（440 Hz–12 kHz，44.1 kHz / 128 kbps）**27.60–32.73 dB**，最差点在 4 kHz。
+- 输入峰值达到满幅的 75% 时，编码器从量化结果估算 PCM 峰值。估算峰值越过阈值时，以整段统一的增益降低电平。满幅宽带噪声和瞬态回归用例由 mpg123 与 FFmpeg 验证解码采样峰值 ≤1.0。
+- 短块按采样率重排频线，使用 `global_gain` 量化，短块逐带 scalefactor 保持为零。
 - 白噪声这类平坦信号约 13.5 dB，属 128 kbps 单声道下量化格点的固有边界，不是结构缺陷。
 - 低码率下真正受限的是**位预算**而非本次新增的采样率/码率通路：`count1` 1-bit 提前终止正是为了在 32–96 kbps 下让每 granule 的位预算装得下。
 
@@ -75,7 +89,7 @@ let c : Bytes = @moonmp3_encoder.encode_at(samples, 32000, 1, 64000)
 
 编码器的正确性不靠"能跑"判断：
 
-- `tools/rates.py`：**84 组全矩阵**（3 档采样率 × 14 档码率 × 单/双声道）逐组编码，再用 libsndfile（其 MP3 解码由 mpg123 提供）解码，校验帧字节数、解码采样率、声道数与样本数，**84/84 通过、0 blocked、0 FAIL**。
+- `tools/rates.py`：**84 组全矩阵**（3 档采样率 × 14 档码率 × 单/双声道）逐组编码并检查每帧头、CBR 填充和位保留区边界。mpg123（经 libsndfile）和 FFmpeg（经 PyAV）各自检查采样率、声道数、样本数和非静音输出。该矩阵在 CI 运行。
 - `tools/verify.py structure` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码输出，检查帧网格、长度和静音正确性（12 项）。
 - `tools/lame_ref.py` 对比 PyAV `libmp3lame` 128k mono CBR 在五个探针上的表现（支持 `--json` 输出）。
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
@@ -91,7 +105,7 @@ let c : Bytes = @moonmp3_encoder.encode_at(samples, 32000, 1, 64000)
 - `moon run cmd/main -- gen 48000 192000 2 4 440` 在任意采样率 / 码率 / 声道组合下编码一段正弦并打印 base64 流（`tools/rates.py` 就是用它驱动 84 组矩阵的）。
 - `moon run cmd/main -- alloc 440 50 5` 打印某个 granule 每个候选增益的精确 Huffman 代价与重建误差，用来判断分配器为什么选了这个增益。
 - `tools/spectrum.py` 报告主频和强峰，确认 440/660 Hz 没有丢失或串声道。
-- `tools/selftest.py` 验证上述工具本身没有回归（34 例）。
+- `tools/selftest.py` 验证上述工具本身没有回归（35 例）。
 - `tools/doctor.py` 检查 MoonBit、libsndfile、MP3 解码后端和素材是否就绪。
 - `tools/check_release.py` 核对版本三处同步、必需文件和 CI 覆盖。
 
@@ -104,7 +118,7 @@ python tools/verify.py structure
 python tools/rates.py
 ```
 
-`tools/rates.py` 的 84 组全部走真实编码 + 独立解码，不依赖软件包内的自证；它输出的 `Summary: 84 total | 84 passed | 0 blocked-by-count1 | 0 failed` 就是本 README 里"84 组配置"这一声明的复现口径。
+`tools/rates.py` 在任一组合编码、帧结构或解码检查失败时返回非零退出码。
 
 ## 开发资料
 

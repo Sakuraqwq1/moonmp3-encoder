@@ -96,28 +96,41 @@ fn long_scalefactor_partition_for(rate : Int32) -> (Array[Int32], Int32) {
 pub const ShortScalefactorCount : Int32 = 36
 
 ///|
-/// Number of short frequency partitions including the unscaled 136..191 tail.
+/// Number of short frequency partitions including the unscaled tail.
 pub const ShortFrequencyBandCount : Int32 = 37
 
 ///|
-/// Start frequency of each 44.1 kHz short-window band within one 192-line
-/// window, plus the 192-line sentinel. Bands 0..11 carry scalefactors; band 12
-/// is the unscaled tail.
-let short_scalefactor_starts : Array[Int32] = [
+// ISO/IEC 11172-3 Table B.8.a/b/c. Bands 0..11 transmit scalefactors;
+// band 12 is unscaled, and 192 is the end of each window.
+let short_scalefactor_starts_32k : Array[Int32] = [
+  0, 4, 8, 12, 16, 22, 30, 42, 58, 78, 104, 138, 180, 192,
+]
+
+///|
+let short_scalefactor_starts_44k : Array[Int32] = [
   0, 4, 8, 12, 16, 22, 30, 40, 52, 66, 84, 106, 136, 192,
 ]
 
 ///|
+let short_scalefactor_starts_48k : Array[Int32] = [
+  0, 4, 8, 12, 16, 22, 28, 38, 50, 64, 80, 100, 126, 192,
+]
+
+///|
+fn short_scalefactor_starts() -> Array[Int32] {
+  match get_active_samplerate() {
+    32000 => short_scalefactor_starts_32k
+    48000 => short_scalefactor_starts_48k
+    _ => short_scalefactor_starts_44k
+  }
+}
+
+///|
 /// Short band of one frequency within a 192-line window, 0..12.
 pub fn short_scalefactor_band_of_frequency(frequency : Int32) -> Int32 {
-  if frequency < 0 {
-    return 0
-  }
-  if frequency >= 136 {
-    return 12
-  }
+  let starts = short_scalefactor_starts()
   for band = 1; band < 13; band = band + 1 {
-    if frequency < short_scalefactor_starts[band] {
+    if frequency < starts[band] {
       return band - 1
     }
   }
@@ -127,13 +140,7 @@ pub fn short_scalefactor_band_of_frequency(frequency : Int32) -> Int32 {
 ///|
 /// Start of a short scalefactor partition in one 192-line window.
 pub fn short_scalefactor_band_start(band : Int32) -> Int32 {
-  if band <= 0 {
-    0
-  } else if band < 13 {
-    short_scalefactor_starts[band]
-  } else {
-    192
-  }
+  short_scalefactor_starts()[band.clamp(min=0, max=13)]
 }
 
 ///|

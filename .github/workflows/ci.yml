@@ -103,6 +103,9 @@ jobs:
       - name: Verify the silent frame grid end to end
         run: python tools/verify.py structure
 
+      - name: Verify all 84 MPEG-1 CBR configurations
+        run: python tools/rates.py
+
   build-wasm:
     name: build (wasm-gc)
     runs-on: ubuntu-latest
