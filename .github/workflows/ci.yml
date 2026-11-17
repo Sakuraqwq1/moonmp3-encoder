@@ -104,7 +104,9 @@ jobs:
         run: python tools/verify.py structure
 
       - name: Verify all 84 MPEG-1 CBR configurations
-        run: python tools/rates.py
+        run: |
+          python tools/rates.py
+          python tools/rates.py --frames 1
 
   build-wasm:
     name: build (wasm-gc)

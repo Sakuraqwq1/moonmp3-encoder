@@ -36,6 +36,10 @@ import snr
 import spectrum
 
 
+def decoded_samples(sample_count):
+    return mp3lab.expected_encoded_frames(sample_count) * mp3lab.MP3_FRAME_SAMPLES
+
+
 class FixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -101,8 +105,8 @@ class Mp3DumpTests(unittest.TestCase):
     def test_stereo_frame_grid(self):
         report = mp3dump.analyze(self.stereo_path)
         self.assertEqual(report["warnings"], [])
-        self.assertEqual(report["summary"]["frames"], 39)
-        self.assertEqual(report["summary"]["bytes"], 16300)
+        self.assertEqual(report["summary"]["frames"], 40)
+        self.assertEqual(report["summary"]["bytes"], 16718)
         self.assertTrue(report["summary"]["constant_bitrate"])
         self.assertEqual(report["summary"]["bitrates"], [128000])
         self.assertEqual(report["summary"]["channels"], [2])
@@ -114,7 +118,7 @@ class Mp3DumpTests(unittest.TestCase):
     def test_mono_frame_grid(self):
         report = mp3dump.analyze(self.mono_path)
         self.assertEqual(report["warnings"], [])
-        expected_frames = (4096 + 1151) // 1152
+        expected_frames = mp3lab.expected_encoded_frames(4096)
         expected_bytes = expected_frames * 144 * 128000 // 44100
         self.assertEqual(report["summary"]["frames"], expected_frames)
         self.assertEqual(report["summary"]["bytes"], expected_bytes)
@@ -124,7 +128,7 @@ class Mp3DumpTests(unittest.TestCase):
     def test_json_is_serialisable(self):
         report = mp3dump.analyze(self.stereo_path)
         encoded = json.dumps(report)
-        self.assertEqual(json.loads(encoded)["summary"]["frames"], 39)
+        self.assertEqual(json.loads(encoded)["summary"]["frames"], 40)
 
     def test_truncated_stream_warns(self):
         path = os.path.join(self.tmp.name, "truncated.mp3")
@@ -132,7 +136,7 @@ class Mp3DumpTests(unittest.TestCase):
             handle.write(self.stereo[:-100])
         report = mp3dump.analyze(path)
         self.assertTrue(report["warnings"])
-        self.assertLess(report["summary"]["frames"], 39)
+        self.assertLess(report["summary"]["frames"], 40)
 
     def test_strict_cli_exit_code(self):
         path = os.path.join(self.tmp.name, "garbage.mp3")
@@ -408,26 +412,85 @@ class BoundaryMatrixTests(unittest.TestCase):
             mp3lab.run_cli("encode", payload.decode(), str(channels), str(rate), str(bitrate))
         )
 
-    def test_block_edges_1151_1152_1153(self):
-        # One sample either side of the 1152-sample frame is where an off-by-one
-        # in the frame count shows up as a wrong decoded length or a wrong
-        # frequency, so all three are checked for both channel counts.
-        # libsndfile cannot open a one-frame stream, so the boundary is probed at
-        # the second frame (2*1152 +- 1); the one-frame case is covered by mp3dump.
-        for count in (2 * 1152 - 1, 2 * 1152, 2 * 1152 + 1):
+    def test_short_and_frame_boundary_inputs_open_in_both_decoders(self):
+        # Check the shortest legal non-silent PCM and both sides of the first
+        # two input-frame boundaries with automatic format probing.
+        import crossdecode
+
+        for count in (1, 1151, 1152, 1153, 2303, 2304, 2305):
             for channels in (1, 2):
                 index = np.arange(count)
                 tone = np.zeros((count, channels))
                 for channel in range(channels):
                     freq = 440.0 + 220.0 * channel
-                    tone[:, channel] = 0.5 * 32767 * np.sin(2 * np.pi * freq * index / 44100.0)
+                    tone[:, channel] = 0.5 * 32767 * np.cos(2 * np.pi * freq * index / 44100.0)
                 payload = self._encode_pcm(tone.reshape(-1), channels)
-                data, rate = mp3lab.decode_mp3(payload)
-                self.assertEqual(rate, 44100)
-                self.assertEqual(data.shape[1], channels)
-                expected = ((count + 1151) // 1152) * 1152
-                self.assertEqual(data.shape[0], expected)
-                self.assertLess(float(np.max(np.abs(data))), 1.30)
+                expected = decoded_samples(count)
+                for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
+                    with self.subTest(count=count, channels=channels, decoder=decode.__name__):
+                        data, rate = decode(payload)
+                        self.assertEqual(rate, 44100)
+                        self.assertEqual(data.shape, (expected, channels))
+                        self.assertTrue(np.all(np.isfinite(data)))
+                        self.assertGreater(float(np.max(np.abs(data))), 0.01)
+                        self.assertLess(float(np.max(np.abs(data))), 1.30)
+
+    def test_short_low_bitrate_broadband_is_detected_as_mp3(self):
+        import crossdecode
+
+        for count, rate, bitrate, channels in (
+            (1151, 44100, 40, 2),
+            (1151, 48000, 40, 1),
+            (1152, 44100, 40, 2),
+            (1152, 48000, 32, 1),
+        ):
+            with self.subTest(count=count, rate=rate, bitrate=bitrate, channels=channels):
+                pcm = np.random.default_rng(993 + count).integers(
+                    -32768, 32768, (count, channels), dtype="<i2"
+                )
+                pcm = (pcm * 0.74).astype("<i2")
+                payload = self._encode_pcm(pcm.reshape(-1), channels, rate, bitrate)
+                data, decoded_rate = crossdecode.decode_with_ffmpeg(payload)
+                self.assertEqual(decoded_rate, rate)
+                self.assertEqual(data.shape, (4 * mp3lab.MP3_FRAME_SAMPLES, channels))
+                self.assertTrue(np.isfinite(data).all())
+                self.assertGreater(float(np.max(np.abs(data))), 0.01)
+
+    def test_final_tone_survives_without_caller_padding(self):
+        # Non-zero samples anywhere in the stream are not enough: after the
+        # known 1057-sample delay, the exact final 256-sample tone must be present
+        # for both whole-frame and partial-frame input, at every rate/channel mode.
+        import crossdecode
+
+        for count in (4607, 4608):
+            for rate in (32000, 44100, 48000):
+                for channels in (1, 2):
+                    pcm = np.zeros((count, channels), dtype=np.int16)
+                    tone = np.rint(
+                        14000 * np.sin(2 * np.pi * 1100 * np.arange(256) / rate)
+                    ).astype(np.int16)
+                    pcm[-256:, :] = tone[:, None]
+                    payload = self._encode_pcm(pcm.reshape(-1), channels, rate)
+                    aligned = count - 256 + 1057
+                    for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
+                        with self.subTest(
+                            count=count, rate=rate, channels=channels,
+                            decoder=decode.__name__,
+                        ):
+                            data, decoded_rate = decode(payload)
+                            self.assertEqual(decoded_rate, rate)
+                            self.assertEqual(data.shape, (decoded_samples(count), channels))
+                            actual = data[aligned:aligned + 256, :].astype(np.float64)
+                            self.assertEqual(actual.shape, (256, channels))
+                            for channel in range(channels):
+                                expected = tone.astype(np.float64) / 32768.0
+                                correlation = float(
+                                    np.corrcoef(actual[:, channel], expected)[0, 1]
+                                )
+                                self.assertGreater(
+                                    float(np.max(np.abs(actual[:, channel]))), 0.25
+                                )
+                                self.assertGreater(correlation, 0.99)
 
     def test_full_scale_and_impulse_stay_finite(self):
         for percent in (99, 100):
@@ -481,11 +544,40 @@ class BoundaryMatrixTests(unittest.TestCase):
                         for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
                             audio, decoded_rate = decode(payload)
                             self.assertEqual(decoded_rate, rate)
-                            self.assertEqual(audio.shape, pcm.shape)
+                            self.assertEqual(
+                                audio.shape, (decoded_samples(pcm.shape[0]), channels)
+                            )
                             self.assertTrue(np.all(np.isfinite(audio)))
                             peak = float(np.max(np.abs(audio)))
                             self.assertGreater(peak, 0.01)
                             self.assertLessEqual(peak, 1.0)
+
+    def test_midscale_broadband_and_monitor_threshold_do_not_overshoot(self):
+        # Regression for the former `peak >= 0.75` monitor gate: this exact
+        # 0.74 FS input used to bypass reconstruction monitoring entirely.
+        # Include both sides of the old threshold to prevent reintroducing a
+        # nearby unprotected band, and measure floating-point PCM in both decoders.
+        import crossdecode
+
+        source = np.random.default_rng(22).integers(
+            -32768, 32768, (5760, 2), dtype="<i2"
+        )
+        for scale in (0.74, 0.749, 0.75, 0.751):
+            pcm = (source.astype(np.float64) * scale).astype(np.int16)
+            for rate, bitrate in ((32000, 32), (48000, 128)):
+                payload = self._encode_pcm(pcm.reshape(-1), 2, rate, bitrate)
+                for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
+                    with self.subTest(
+                        scale=scale, rate=rate, bitrate=bitrate,
+                        decoder=decode.__name__,
+                    ):
+                        audio, decoded_rate = decode(payload)
+                        self.assertEqual(decoded_rate, rate)
+                        self.assertEqual(audio.shape, (decoded_samples(5760), 2))
+                        self.assertTrue(np.all(np.isfinite(audio)))
+                        peak = float(np.max(np.abs(audio)))
+                        self.assertGreater(peak, 0.01)
+                        self.assertLessEqual(peak, 1.0)
 
     def test_transient_switches_to_short_windows(self):
         import crossdecode
@@ -514,10 +606,15 @@ class BoundaryMatrixTests(unittest.TestCase):
                         for g in frame["side_info"]["granules"]
                     ]
                     for channel in range(channels):
-                        self.assertEqual(granules[channel::channels], [0] * 5 + [1, 2, 2, 3, 0])
+                        self.assertEqual(
+                            granules[channel::channels],
+                            [0] * 5 + [1, 2, 2, 3, 0] + [0] * 4,
+                        )
                     data, decoded_rate = mp3lab.decode_mp3(payload)
                     self.assertEqual(decoded_rate, rate)
-                    self.assertEqual(data.shape, samples.shape)
+                    self.assertEqual(
+                        data.shape, (decoded_samples(samples.shape[0]), channels)
+                    )
                     self.assertTrue(np.all(np.isfinite(data)))
                     self.assertGreater(float(np.max(np.abs(data))), 0.01)
                     agreed = crossdecode.compare(payload)

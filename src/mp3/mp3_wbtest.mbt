@@ -109,11 +109,12 @@ test "side info : all-zero granules serialise to zero bytes" {
 }
 
 ///|
-test "encode : one second of stereo silence is 39 valid frames" {
+test "encode : one second of stereo silence has one flush frame" {
   let samples = Array::make(44100 * 2, 0)
   let mp3 = encode(samples, SampleRate44100, 2)
-  // 39 frames: floor(39 * 144 * 128000 / 44100) = 16300 bytes in total.
-  assert_eq(mp3.length(), 16300)
+  // ceil(44100 / 1152) = 39 input frames, plus one frame that drains the
+  // analysis/synthesis delay. CBR bytes still follow the exact frame grid.
+  assert_eq(mp3.length(), 16718)
   let mut frames = 0
   let mut offset = 0
   while offset + 4 <= mp3.length() {
@@ -124,8 +125,19 @@ test "encode : one second of stereo silence is 39 valid frames" {
     frames = frames + 1
     offset = offset + size
   }
-  assert_eq(frames, 39)
-  assert_eq(offset, 16300)
+  assert_eq(frames, 40)
+  assert_eq(offset, 16718)
+}
+
+///|
+test "encode : short and partial input includes extra probe padding" {
+  let counts = [1, 1151, 1152, 1153, 2304, 5760, 5761, 6912, 6913]
+  let expected_frames = [4, 4, 4, 4, 4, 7, 7, 7, 8]
+  for index = 0; index < counts.length(); index = index + 1 {
+    let mp3 = encode(Array::make(counts[index], 0), SampleRate44100, 1)
+    let expected_bytes = expected_frames[index] * 144 * 128000 / 44100
+    assert_eq(mp3.length(), expected_bytes)
+  }
 }
 
 ///|

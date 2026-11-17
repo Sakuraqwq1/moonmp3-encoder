@@ -26,7 +26,9 @@ import numpy as np
 
 from crossdecode import decode_with_ffmpeg
 from mp3dump import parse_header, parse_side_info
-from mp3lab import ToolError, decode_mp3, extract_payload, run_cli
+from mp3lab import (
+    MP3_FRAME_SAMPLES, ToolError, decode_mp3, expected_encoded_frames, extract_payload, run_cli,
+)
 
 RATES = [32000, 44100, 48000]
 BITRATES = [
@@ -38,14 +40,17 @@ DEFAULT_FRAMES = 4
 
 
 def test_combination(rate: int, bitrate: int, channels: int, frames: int = DEFAULT_FRAMES) -> dict:
-    expected_bytes = frames * 144 * bitrate // rate
-    expected_samples = frames * 1152
+    encoded_frames = expected_encoded_frames(frames * MP3_FRAME_SAMPLES)
+    expected_bytes = encoded_frames * 144 * bitrate // rate
+    expected_samples = encoded_frames * MP3_FRAME_SAMPLES
 
     case = {
         "rate": rate,
         "bitrate": bitrate,
         "channels": channels,
-        "frames": frames,
+        "input_frames": frames,
+        "frames": encoded_frames,
+        "flush_frames": encoded_frames - frames,
         "expected_bytes": expected_bytes,
         "bytes": 0,
         "decoded_frames": 0,
@@ -66,7 +71,7 @@ def test_combination(rate: int, bitrate: int, channels: int, frames: int = DEFAU
         area_start = 0
         previous_data_end = 0
         mode = 3 if channels == 1 else 0
-        for frame in range(frames):
+        for frame in range(encoded_frames):
             header = parse_header(payload, offset)
             end = (frame + 1) * 144 * bitrate // rate
             if (
@@ -98,7 +103,7 @@ def test_combination(rate: int, bitrate: int, channels: int, frames: int = DEFAU
             if not np.isfinite(data).all() or not np.any(data):
                 raise ToolError(f"{name}: decoded tone is non-finite or silent")
         case["decoded_samples"] = expected_samples
-        case["decoded_frames"] = frames
+        case["decoded_frames"] = encoded_frames
     except ToolError as exc:
         case["detail"] = str(exc)
         return case
@@ -135,8 +140,8 @@ def main():
     parser.add_argument("--frames", type=int, default=DEFAULT_FRAMES, help="frames per case (default 4)")
     args = parser.parse_args()
 
-    if args.frames < 2:
-        parser.error("--frames must be at least 2 for independent decoder validation")
+    if args.frames < 1:
+        parser.error("--frames must be at least 1")
 
     results = run_matrix(frames=args.frames)
 

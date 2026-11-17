@@ -643,12 +643,20 @@ pub fn encode(
   let per_channel = samples.length() / channels
   let peak = pcm_peak(samples)
   let headroom = headroom_for_peak(peak)
-  let peak_monitors = if peak >= 0.75 {
+  // Quantisation and synthesis overshoot are not limited to near-full-scale
+  // input. In particular, dense 0.74 FS noise can reconstruct above 1.0, so a
+  // threshold here would silently bypass the protection for legal PCM.
+  let peak_monitors = if peak > 0.0 {
     Array::makei(channels, _ => PeakMonitor::new())
   } else {
     []
   }
-  let nframes = (per_channel + FrameSamples - 1) / FrameSamples
+  // Drain the 1057-sample analysis/synthesis delay. Give the format probe
+  // extra consecutive headers on short streams: FFmpeg can mistake very
+  // short MPEG audio for MPEG-TS or fail to identify the format entirely.
+  let input_frames = (per_channel - 1) / FrameSamples + 1
+  let tail_frames = if input_frames <= 5 { 2 } else { 1 }
+  let nframes = (input_frames + tail_frames).max(4)
   let block_types = schedule_block_types(samples, channels, nframes)
   let mode = if channels == 1 { ModeMono } else { ModeStereo }
   let sizer = FrameSizer::new(bps, sample_rate)

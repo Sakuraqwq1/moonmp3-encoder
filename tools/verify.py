@@ -4,8 +4,8 @@
 structure   Emit silence through the CLI, decode it with libsndfile through
             Python `soundfile` (its MP3 decoder is mpg123, completely
             independent of the MoonBit ecosystem) and check the frame grid:
-            the stream must decode to exactly frames * 1152 zero samples per
-            channel.
+            Decode to 1152 zero samples per encoded frame, including the flush
+            frame and the extra probing frame for short input.
 
 Later stages add `matrix` (SNR against the source PCM), `benchmark` (size
 against LAME at the same CBR rate) and `perf`.
@@ -21,7 +21,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mp3lab import ToolError, decode_mp3, encode_silence
+from mp3lab import MP3_FRAME_SAMPLES, ToolError, decode_mp3, encode_silence, expected_encoded_frames
 
 
 def structure():
@@ -29,16 +29,13 @@ def structure():
     import numpy as np
 
     cases = []
-    # libsndfile/mpg123 cannot open a one-frame MP3 stream (it reads the next
-    # header to identify the format), so the decoder-side check starts at two
-    # frames; one-frame streams are covered structurally by tools/mp3dump.py.
-    for samples in (1153, 2304, 4095, 4096, 4097, 44100):
+    for samples in (1, 1151, 1152, 1153, 2304, 4095, 4096, 4097, 44100):
         for channels in (1, 2):
             mp3 = encode_silence(samples, channels)
-            frames = (samples + 1151) // 1152
+            frames = expected_encoded_frames(samples)
             data, rate = decode_mp3(mp3)
             peak = float(np.max(np.abs(data))) if data.size else 0.0
-            expected = frames * 1152
+            expected = frames * MP3_FRAME_SAMPLES
             ok = rate == 44100 and data.shape[0] == expected and peak == 0.0
             cases.append(
                 {

@@ -25,6 +25,15 @@ class ToolError(RuntimeError):
     """A lab tool could not complete its job."""
 
 
+MP3_FRAME_SAMPLES = 1152
+
+
+def expected_encoded_frames(samples_per_channel: int) -> int:
+    """Expected CBR grid with flush and short-stream probing padding."""
+    input_frames = (samples_per_channel + MP3_FRAME_SAMPLES - 1) // MP3_FRAME_SAMPLES
+    return max(4, input_frames + (2 if input_frames <= 5 else 1))
+
+
 def find_moon() -> str:
     """Locate the MoonBit CLI without requiring it to be on PATH."""
     override = os.environ.get("MOON")
