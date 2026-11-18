@@ -128,9 +128,20 @@ fn estimate_band_bits(
   values : Array[Int32],
   band : Int32,
   table : Int32,
+  block_type : Int32,
 ) -> Int32 {
-  let start = scalefactor_band_start(band)
-  let stop = scalefactor_band_end(band)
+  let short = block_type == BlockTypeShort
+  let start = if short {
+    short_scalefactor_band_start(band / 3) * 3 +
+    band % 3 * short_scalefactor_band_width(band / 3)
+  } else {
+    scalefactor_band_start(band)
+  }
+  let stop = if short {
+    start + short_scalefactor_band_width(band / 3)
+  } else {
+    scalefactor_band_end(band)
+  }
   let mut bits = 0
   let mut index = start
   while index + 1 < stop {
@@ -165,20 +176,29 @@ fn refine_scalefactors(
   if base.error <= 0.0 || base.cost >= budget {
     return base
   }
-  if block_type == BlockTypeShort {
-    // The short-window path stays on all-zero scalefactors for now: it is
-    // decoded correctly as-is, and per-band refinement for the 36 short fields
-    // is a follow-up that does not change the window-switching correctness.
-    return base
+  let short = block_type == BlockTypeShort
+  let field_count = if short {
+    ShortScalefactorCount
+  } else {
+    LongScalefactorBandCount
   }
-  let profile = LongScalefactorBandCount * 16
+  let first_group = if short { 18 } else { ScalefactorsInGroup1 }
+  let profile = field_count * 16
   let errors = Array::make(profile, 0.0)
   let estimates = Array::make(profile, 0)
-  for band = 0; band < LongScalefactorBandCount; band = band + 1 {
+  for band = 0; band < field_count; band = band + 1 {
     for scalefactor = 0; scalefactor < 16; scalefactor = scalefactor + 1 {
-      let trial = zero_scalefactors()
+      let trial = if short {
+        zero_short_scalefactors()
+      } else {
+        zero_scalefactors()
+      }
       trial[band] = scalefactor
-      let values = quantiser.quantise_scaled(base.gain, trial, 0)
+      let values = if short {
+        quantiser.quantise_scaled_short(base.gain, trial, 0)
+      } else {
+        quantiser.quantise_scaled(base.gain, trial, 0)
+      }
       errors[band * 16 + scalefactor] = quantiser.band_error(
         values,
         base.gain,
@@ -190,28 +210,27 @@ fn refine_scalefactors(
         values,
         band,
         base.table,
+        block_type,
       )
     }
   }
   let mut current = base
-  let mut current_sf = copy_scalefactors(base.scalefactors)
-  let blocked = Array::make(LongScalefactorBandCount, false)
+  let mut current_sf = base.scalefactors.copy()
+  let blocked = Array::make(field_count, false)
   let mut trials = 0
   // Every accepted increment costs at least one bit, but the cap is what keeps
   // a dense granule from turning encoder time into an unbounded search.
   while trials < 64 {
     let mut chosen = -1
     let mut best_score = 0.0
-    for band = 0; band < LongScalefactorBandCount; band = band + 1 {
+    for band = 0; band < field_count; band = band + 1 {
       if blocked[band] {
         continue
       }
       let scalefactor = current_sf[band]
-      // Group 1 (sfb 0..10) has up to four bits, group 2 (sfb 11..20) only up
-      // to three. A value of 8..15 in group 2 has no `scalefac_compress`
-      // encoding at all: `scalefactor_compress` returns -1 and the bitstream
-      // would carry no scalefactors while the model assumed they were applied.
-      let limit = if band < ScalefactorsInGroup1 { 15 } else { 7 }
+      // slen1 supports four bits and slen2 supports three. Short blocks have
+      // 18 fields per group, ordered by frequency band and then window.
+      let limit = if band < first_group { 15 } else { 7 }
       if scalefactor >= limit {
         continue
       }
@@ -235,11 +254,11 @@ fn refine_scalefactors(
     if chosen < 0 {
       break
     }
-    let next_sf = copy_scalefactors(current_sf)
+    let next_sf = current_sf.copy()
     next_sf[chosen] = next_sf[chosen] + 1
     let trial = plan_scaled(base.gain, next_sf, quantiser, block_type)
     trials = trials + 1
-    if trial.cost <= budget && trial.error < current.error {
+    if trial.cost >= 0 && trial.cost <= budget && trial.error < current.error {
       current = trial
       current_sf = next_sf
     } else {
@@ -665,7 +684,7 @@ pub fn encode(
     analysis.push(ChannelAnalysis::new())
   }
   let pcm = Array::make(GranulePcm, 0.0)
-  let out = @buffer.Buffer::Buffer(size_hint=8192)
+  let out = @buffer.Buffer::Buffer()
   let reservoir = MainDataReservoir::new()
   // Pass one: analyse, quantise and append, which fixes where every frame's data
   // lands in the stream.

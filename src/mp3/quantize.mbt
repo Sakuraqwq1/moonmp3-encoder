@@ -327,10 +327,11 @@ pub fn GranuleQuantiser::band_error(
   let multiplier = scalefactor_step_multiplier(scalefac_scale)
   let sf = if band < scalefactors.length() { scalefactors[band] } else { 0 }
   let attenuation = @math.pow(2.0, -multiplier * sf.to_double())
-  let start = scalefactor_band_start(band)
-  let stop = scalefactor_band_end(band)
   let mut total = 0.0
-  for index = start; index < stop && index < values.length(); index = index + 1 {
+  for index = 0; index < values.length(); index = index + 1 {
+    if self.bands[index] != band {
+      continue
+    }
     let magnitude = dequant_levels[values[index].abs()] *
       amplitude *
       attenuation

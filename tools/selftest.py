@@ -600,6 +600,35 @@ class BoundaryMatrixTests(unittest.TestCase):
                         path.write_bytes(payload)
                         report = mp3dump.analyze(path)
                     self.assertEqual(report["warnings"], [])
+                    # Read the transmitted fields from the joined main-data
+                    # reservoir, so this also checks scalefactor serialization.
+                    areas = []
+                    for frame in report["frames"]:
+                        header = frame["header"]
+                        body = frame["offset"] + 4 + header["side_size"]
+                        if not header["protection"]:
+                            body += 2
+                        areas.append(payload[body:frame["offset"] + header["size"]])
+                    bits = mp3dump.Bits(b"".join(areas))
+                    slen1 = (0, 0, 0, 0, 3, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4)
+                    slen2 = (0, 1, 2, 3, 0, 1, 2, 3, 1, 2, 3, 1, 2, 3, 2, 3)
+                    area_start = 0
+                    refined_channels = set()
+                    for frame, area in zip(report["frames"], areas):
+                        side = frame["side_info"]
+                        bits.pos = (area_start - side["main_data_begin"]) * 8
+                        for index, granule in enumerate(side["granules"]):
+                            start = bits.pos
+                            if granule["block_type"] == 2:
+                                compress = granule["scalefac_compress"]
+                                fields = [bits.read(slen1[compress]) for _ in range(18)]
+                                fields += [bits.read(slen2[compress]) for _ in range(18)]
+                                self.assertLessEqual(bits.pos - start, granule["part2_3_length"])
+                                if any(fields):
+                                    refined_channels.add(index % channels)
+                            bits.pos = start + granule["part2_3_length"]
+                        area_start += len(area)
+                    self.assertEqual(refined_channels, set(range(channels)))
                     granules = [
                         g["block_type"]
                         for frame in report["frames"]

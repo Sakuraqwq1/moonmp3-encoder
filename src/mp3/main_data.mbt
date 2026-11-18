@@ -35,7 +35,7 @@ pub fn encode_count1_spectrum(
   let side_bits = if channels == 1 { 136 } else { 256 }
   let required_bits = 32 + side_bits + granule_bits * 2 * channels
   let sizer = FrameSizer::new(Bitrate128kbps, SampleRate44100)
-  let out = @buffer.Buffer::Buffer(size_hint=8192)
+  let out = @buffer.Buffer::Buffer()
   for _frame = 0; _frame < frames; _frame = _frame + 1 {
     let size = sizer.next_frame_size()
     if required_bits > size * 8 {

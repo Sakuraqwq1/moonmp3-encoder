@@ -16,11 +16,7 @@ pub struct BitWriter {
 ///|
 /// A fresh writer with an empty buffer.
 pub fn BitWriter::new() -> BitWriter {
-  BitWriter::{
-    buffer: @buffer.Buffer::Buffer(size_hint=8192),
-    current: 0,
-    filled: 0,
-  }
+  BitWriter::{ buffer: @buffer.Buffer::Buffer(), current: 0, filled: 0, }
 }
 
 ///|

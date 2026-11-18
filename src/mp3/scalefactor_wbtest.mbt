@@ -6,6 +6,56 @@
 // width table and the exact bit layout of the 21 transmitted values.
 
 ///|
+test "short scalefactors refine independently within the exact bit budget" {
+  let saved_rate = get_active_samplerate()
+  defer set_active_samplerate(saved_rate)
+  for rate in [32000, 44100, 48000] {
+    set_active_samplerate(rate)
+    let lines = Array::make(576, 0.0)
+    lines[0] = 0.1
+    lines[short_scalefactor_band_width(0)] = 0.1
+    lines[100] = 0.5
+    let quantiser = GranuleQuantiser::new_typed(lines, BlockTypeShort)
+    let gain = global_gain_for_peak(peak_absolute(lines), MaxQuantLevel)
+    let base = plan_unscaled(gain, quantiser, BlockTypeShort)
+    let refined = refine_scalefactors(4095, base, quantiser, BlockTypeShort)
+    assert_true(refined.error < base.error)
+    assert_true(refined.scalefactors.iter().any(sf => sf > 0))
+    assert_true(refined.cost <= 4095)
+    assert_eq(
+      refined.cost,
+      granule_cost(refined.values, refined.table, refined.big_values) +
+      short_scalefactor_bit_count(refined.scalefac_compress),
+    )
+    assert_eq(
+      refined.scalefac_compress,
+      short_scalefactor_compress(refined.scalefactors),
+    )
+    for field = 0; field < ShortScalefactorCount; field = field + 1 {
+      assert_true(
+        refined.scalefactors[field] <= (if field < 18 { 15 } else { 7 }),
+      )
+    }
+    let constrained = refine_scalefactors(
+      base.cost,
+      base,
+      quantiser,
+      BlockTypeShort,
+    )
+    assert_eq(constrained.error, base.error)
+    assert_eq(constrained.cost, base.cost)
+    let trial = zero_short_scalefactors()
+    trial[0] = 2
+    let values = quantiser.quantise_scaled_short(gain, trial, 0)
+    assert_true(values[0] > values[short_scalefactor_band_width(0)])
+    assert_true(
+      quantiser.band_error(values, gain, trial, 0, 0) <
+      quantiser.band_error(base.values, gain, zero_short_scalefactors(), 0, 0),
+    )
+  }
+}
+
+///|
 test "scalefactor : the bands partition all 576 lines" {
   let mut total = 0
   for band = 0; band < LongFrequencyBandCount; band = band + 1 {
