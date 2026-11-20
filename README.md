@@ -21,7 +21,7 @@ MoonBit 生态里已有纯 MoonBit 的 MP3 **解码器**（`enanandesu/mp3`）�
 - 合计 **3 档采样率 × 14 档码率 × 单/双声道 = 84 组标准编码配置**，逐组实测编码并由独立解码器解码校验通过（`python tools/rates.py`）
 - 长块 + 瞬态短块/窗切换（`block_type` 0/1/2/3），窗与 MDCT 余弦矩阵跨帧缓存
 - 采样率自适应的 scalefactor band：Table B.8.a（32 kHz）、B.8.b（44.1 kHz）、B.8.c（48 kHz）三套 21 带长块与 12 带短块边界
-- `big_values` 表 1–15 中实际定义的 13 张非空 Huffman 表（4/14 未定义）+ `count1`（Table A）动态零尾截断：全零 granule 的最小编码开销从 576 bit 降到 **1 bit**
+- 15 张可选的 MPEG-1 `big_values` Huffman 表（1–3、5–13、15、16、24）与 `count1` Table A。全零 granule 的最小编码开销可降至 **1 bit**
 - 跨帧位保留区（`main_data_begin`）与近满幅输入的连续衰减
 - 明确不做：MP3 解码（生态已有）、MPEG-2 / MPEG-2.5 半采样率（8–24 kHz）、VBR / 联合立体声、复杂心理声学掩蔽模型、播放与设备 IO
 
@@ -49,15 +49,15 @@ test "encode signed 16-bit PCM" {
   let a = @moonmp3_encoder.encode(samples, 44100, 2)
   let b = @moonmp3_encoder.encode(samples, 48000, 2, bitrate=192)
   let c = @moonmp3_encoder.encode_at(samples, 32000, 1, 64000)
-  assert_eq(a.length(), 1671)
-  assert_eq(b.length(), 2304)
-  assert_eq(c.length(), 1152)
+  assert_eq(a.length(), 2925)
+  assert_eq(b.length(), 4032)
+  assert_eq(c.length(), 2016)
 }
 ```
 
 采样按声道交织，取值范围为 `[-32768, 32767]`。码率参数可用 kbps（如 `192`）或 bps（如 `192000`），省略时为 128 kbps。
 
-编码器会刷新尾部，调用方可直接传入原始 PCM。每声道的输入采样数按 1152 向上取整得到输入帧数。输入在 5 帧以内时增加 2 帧，超过 5 帧时增加 1 帧，输出至少 4 帧。用于自动识别的补帧也遵循原采样率和 CBR 帧长，因此直接解码的 PCM 会包含起始延迟和尾部填充。
+编码器会刷新尾部，调用方可直接传入原始 PCM。每声道的输入采样数按 1152 向上取整后加一帧，输出至少 7 帧。短流补帧用于帮助解码器自动识别，遵循原采样率和 CBR 帧长。直接解码的 PCM 含起始延迟和尾部填充。
 
 `sample_rate` 只接受 `32000` / `44100` / `48000`，`bitrate` 只接受上表 14 档标准值，其余参数以 `UnsupportedSampleRate` / `UnsupportedBitrate` / `UnsupportedChannels` 拒绝——非法参数不会静默产出不合规的流。
 
@@ -92,7 +92,7 @@ test "encode signed 16-bit PCM" {
 编码器的正确性不靠"能跑"判断：
 
 - `tools/rates.py`：**84 组全矩阵**（3 档采样率 × 14 档码率 × 单/双声道）逐组编码并检查每帧头、CBR 填充和位保留区边界。mpg123（经 libsndfile）和 FFmpeg（经 PyAV）各自检查采样率、声道数、样本数和非静音输出。CI 同时运行默认的 4 帧输入和 `--frames 1` 的短输入矩阵。
-- `tools/verify.py structure` 用 libsndfile（其 MP3 解码由 mpg123 提供，完全独立于 MoonBit 生态）解码输出，检查帧网格、长度和静音正确性（18 项）。
+- `tools/verify.py structure` 分别用 mpg123 和 FFmpeg 解码，检查采样率、帧数、声道数和静音正确性（18 项）。
 - `tools/lame_ref.py` 对比 PyAV `libmp3lame` 128k mono CBR 在五个探针上的表现（支持 `--json` 输出）。
 - `tools/mp3dump.py` 逐帧解析 MP3 流，可输出人类可读报告或 JSON，并用 `--strict` 检查结构警告。
 - `tools/gen_fixtures.py` 生成确定性的正弦、多音、扫频、噪声和瞬态素材，manifest 记录 SHA-256。

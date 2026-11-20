@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reproduce `src/mp3/huffman_tables.mbt` from its upstream source.
 
-The 15 big_values Huffman tables of ISO/IEC 11172-3 Table B.7 are normative
+The selected big_values Huffman tables from ISO/IEC 11172-3 Table B.7 are normative
 data, not derivable, so they are transcribed. The source is
 `hajimehoshi/go-mp3` (Apache-2.0, same licence as this module) which stores them
 in the compact binary-tree form that decoders use: one `uint16` per node, a leaf
@@ -46,6 +46,7 @@ PATH = "internal/huffman/huffman.go"
 BLOB = "abc30058a5cb0e8a75ea40aed2aa88dd02f2c96e"
 FILE_SHA256 = "6ffbac45b10aabb6cd1a5e37736743ec84ddb8c145fbdd22b2638f1a66cb6b1d"
 TABLES = 34
+ENCODER_TABLES = (*range(1, 4), *range(5, 14), 15, 16, 24)
 
 
 def fetch() -> bytes:
@@ -222,23 +223,25 @@ def digest(tables) -> str:
 def render(tables, reports) -> str:
     by_name = {r["table"]: r for r in reports}
     lines = []
-    for name in range(16):
+    for name in range(max(ENCODER_TABLES) + 1):
         packed = []
-        codes = tables.get(name, {})
+        codes = tables[name] if name in ENCODER_TABLES else {}
         for x in range(16):
             for y in range(16):
                 entry = codes.get((x, y))
                 packed.append(0 if entry is None else (entry[1] << 16) | entry[0])
         for index in range(0, 256, 8):
             lines.append("  " + ", ".join(str(v) for v in packed[index:index + 8]) + ",")
-        if name < 15:
+        if name < max(ENCODER_TABLES):
             lines.append("")
     body = "\n".join(lines).rstrip("\n")
     linbits_line = ", ".join(
-        str(by_name[n]["linbits"]) if n in by_name else "0" for n in range(16)
+        str(by_name[n]["linbits"]) if n in ENCODER_TABLES else "0"
+        for n in range(max(ENCODER_TABLES) + 1)
     )
     extent_line = ", ".join(
-        str(by_name[n]["max_x"]) if n in by_name else "0" for n in range(16)
+        str(by_name[n]["max_x"]) if n in ENCODER_TABLES else "0"
+        for n in range(max(ENCODER_TABLES) + 1)
     )
     return f'''// moonmp3-encoder — pure MoonBit MP3 encoder.
 // Copyright 2026 Sakuraqwq1

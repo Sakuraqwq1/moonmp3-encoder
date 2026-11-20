@@ -28,7 +28,7 @@ pub const LinesPerGranuleCount : Int32 = 576
 pub const QuantizeOffset : Double = 0.4054
 
 ///|
-/// Largest magnitude an MPEG-1 big_values table can carry.
+/// Largest magnitude emitted by this quantiser.
 pub const MaxQuantLevel : Int32 = 15
 
 ///|

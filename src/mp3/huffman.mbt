@@ -9,11 +9,9 @@
 //   [0, 2 * big_values)          pairs (x, y), one table per region
 //   [2 * big_values, 576)        the count1 region, values in -1/0/1
 //
-// MPEG-1 `table_select` is a four-bit field, so only tables 0..15 are reachable,
-// and none of them has an escape (linbits are zero for every MPEG-1 table — the
-// tables that use escapes are MPEG-2's 16..31, which this field cannot select).
-// The practical consequence shapes the quantiser: a coefficient must never
-// exceed the chosen table's extent, and the largest extent available is 15.
+// MPEG-1 table_select uses five bits. The encoder selects 15 defined books,
+// including 16 and 24. This quantiser emits magnitudes up to 15, so these two
+// books carry a zero extension when the base symbol is 15.
 //
 // Tables 1..3 only reach 1 or 2, tables 5..6 reach 3, 7..9 reach 5, 10..12 reach
 // 7 and 13/15 reach 15, so the pair magnitudes decide which tables are legal.
@@ -34,7 +32,12 @@ pub const HuffmanSymbols : Int32 = 256
 ///|
 /// `(length << 16) | code` for a pair, or zero when the table cannot express it.
 fn huffman_entry(table : Int32, x : Int32, y : Int32) -> Int32 {
-  if table < 1 || table > 15 || x < 0 || x > 15 || y < 0 || y > 15 {
+  if table < 1 ||
+    table >= huffman_table_extent.length() ||
+    x < 0 ||
+    x > 15 ||
+    y < 0 ||
+    y > 15 {
     return 0
   }
   huffman_codes[table * HuffmanSymbols + x * 16 + y]
@@ -43,17 +46,16 @@ fn huffman_entry(table : Int32, x : Int32, y : Int32) -> Int32 {
 ///|
 /// Largest coefficient `table` can represent (0 for the empty tables).
 pub fn table_extent(table : Int32) -> Int32 {
-  if table < 0 || table > 15 {
+  if table < 0 || table >= huffman_table_extent.length() {
     return 0
   }
   huffman_table_extent[table]
 }
 
 ///|
-/// Extra bits a table appends when a coefficient reaches 15. Always zero for
-/// MPEG-1 tables; kept explicit so the writer cannot silently assume it.
+/// Extra bits a selected book appends when a coefficient reaches 15.
 pub fn table_linbits(table : Int32) -> Int32 {
-  if table < 0 || table > 15 {
+  if table < 0 || table >= huffman_linbits.length() {
     return 0
   }
   huffman_linbits[table]
@@ -104,19 +106,17 @@ pub fn write_pair(
   w.write_bits(code.to_int64(), length)
   let mut bits = length
   let linbits = table_linbits(table)
-  if linbits != 0 {
-    if x.abs() == 15 {
-      w.write_bits(0L, linbits)
-      bits = bits + linbits
-    }
-    if y.abs() == 15 {
-      w.write_bits(0L, linbits)
-      bits = bits + linbits
-    }
+  if linbits != 0 && x.abs() == 15 {
+    w.write_bits(0L, linbits)
+    bits = bits + linbits
   }
   if x != 0 {
     w.write_bit(if x < 0 { 1 } else { 0 })
     bits = bits + 1
+  }
+  if linbits != 0 && y.abs() == 15 {
+    w.write_bits(0L, linbits)
+    bits = bits + linbits
   }
   if y != 0 {
     w.write_bit(if y < 0 { 1 } else { 0 })
@@ -200,7 +200,7 @@ pub fn choose_table(values : Array[Int32], big_values : Int32) -> Int32 {
   let peak = region_peak(values, 0, big_values * 2)
   let mut best = -1
   let mut best_cost = -1
-  for table = 1; table <= 15; table = table + 1 {
+  for table = 1; table < huffman_table_extent.length(); table = table + 1 {
     if table_extent(table) < peak {
       continue
     }

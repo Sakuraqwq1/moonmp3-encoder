@@ -364,7 +364,7 @@ class AnalysisTests(unittest.TestCase):
                 self.assertEqual(granule["count1table_select"], 0)
                 # Every MPEG-1 table reaches at most 15 and uses no escapes.
                 for table in granule["table_select"]:
-                    self.assertTrue(table in (0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15), table)
+                        self.assertTrue(table in (0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 24), table)
                 # Table A needs only its one-bit all-zero code after the last
                 # non-zero count1 quadruple. No granule may claim more than what
                 # the decoder can reach at this frame (the borrowed bytes plus
@@ -452,9 +452,24 @@ class BoundaryMatrixTests(unittest.TestCase):
                 payload = self._encode_pcm(pcm.reshape(-1), channels, rate, bitrate)
                 data, decoded_rate = crossdecode.decode_with_ffmpeg(payload)
                 self.assertEqual(decoded_rate, rate)
-                self.assertEqual(data.shape, (4 * mp3lab.MP3_FRAME_SAMPLES, channels))
+                self.assertEqual(data.shape, (7 * mp3lab.MP3_FRAME_SAMPLES, channels))
                 self.assertTrue(np.isfinite(data).all())
                 self.assertGreater(float(np.max(np.abs(data))), 0.01)
+
+    def test_full_scale_short_stereo_auto_detection(self):
+        import crossdecode
+
+        pcm = np.random.default_rng(2145).integers(-32768, 32768, (1152, 2), dtype="<i2")
+        payload = self._encode_pcm(pcm.reshape(-1), 2, 44100, 80)
+        for decode in (mp3lab.decode_mp3, crossdecode.decode_with_ffmpeg):
+            with self.subTest(decoder=decode.__name__):
+                audio, rate = decode(payload)
+                self.assertEqual(rate, 44100)
+                self.assertEqual(audio.shape, (7 * mp3lab.MP3_FRAME_SAMPLES, 2))
+                self.assertTrue(np.isfinite(audio).all())
+                peak = float(np.max(np.abs(audio)))
+                self.assertGreater(peak, 0.01)
+                self.assertLessEqual(peak, 1.0)
 
     def test_final_tone_survives_without_caller_padding(self):
         # Non-zero samples anywhere in the stream are not enough: after the

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Reproducible verification for moonmp3-encoder.
 
-structure   Emit silence through the CLI, decode it with libsndfile through
-            Python `soundfile` (its MP3 decoder is mpg123, completely
-            independent of the MoonBit ecosystem) and check the frame grid:
+structure   Emit silence through the CLI and decode it independently with
+            libsndfile (mpg123) and FFmpeg (PyAV).
             Decode to 1152 zero samples per encoded frame, including the flush
             frame and the extra probing frame for short input.
 
@@ -21,6 +20,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from crossdecode import decode_with_ffmpeg
 from mp3lab import MP3_FRAME_SAMPLES, ToolError, decode_mp3, encode_silence, expected_encoded_frames
 
 
@@ -33,18 +33,25 @@ def structure():
         for channels in (1, 2):
             mp3 = encode_silence(samples, channels)
             frames = expected_encoded_frames(samples)
-            data, rate = decode_mp3(mp3)
-            peak = float(np.max(np.abs(data))) if data.size else 0.0
             expected = frames * MP3_FRAME_SAMPLES
-            ok = rate == 44100 and data.shape[0] == expected and peak == 0.0
+            results = {}
+            for name, decode in (("mpg123", decode_mp3), ("ffmpeg", decode_with_ffmpeg)):
+                data, rate = decode(mp3)
+                peak = float(np.max(np.abs(data))) if data.size else 0.0
+                results[name] = {
+                    "decoded": int(data.shape[0]),
+                    "peak": peak,
+                    "ok": rate == 44100 and data.shape == (expected, channels) and peak == 0.0,
+                }
             cases.append(
                 {
                     "samples": samples,
                     "channels": channels,
                     "frames": frames,
-                    "decoded": int(data.shape[0]),
-                    "peak": peak,
-                    "ok": ok,
+                    "decoded": results["mpg123"]["decoded"],
+                    "peak": results["mpg123"]["peak"],
+                    "decoders": results,
+                    "ok": all(result["ok"] for result in results.values()),
                 }
             )
     return cases

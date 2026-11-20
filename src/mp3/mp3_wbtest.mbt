@@ -132,11 +132,35 @@ test "encode : one second of stereo silence has one flush frame" {
 ///|
 test "encode : short and partial input includes extra probe padding" {
   let counts = [1, 1151, 1152, 1153, 2304, 5760, 5761, 6912, 6913]
-  let expected_frames = [4, 4, 4, 4, 4, 7, 7, 7, 8]
+  let expected_frames = [7, 7, 7, 7, 7, 7, 7, 7, 8]
   for index = 0; index < counts.length(); index = index + 1 {
     let mp3 = encode(Array::make(counts[index], 0), SampleRate44100, 1)
     let expected_bytes = expected_frames[index] * 144 * 128000 / 44100
     assert_eq(mp3.length(), expected_bytes)
+  }
+}
+
+///|
+test "Huffman escape books write each extension immediately before its sign" {
+  let mut defined = 0
+  for table = 1; table <= 24; table = table + 1 {
+    if table_extent(table) > 0 {
+      defined += 1
+    }
+  }
+  assert_eq(defined, 15)
+  for table in [16, 24] {
+    let entry = huffman_entry(table, 15, 15)
+    let w = @bits.BitWriter::new()
+    let expected = @bits.BitWriter::new()
+    expected.write_bits((entry & 0xFFFF).to_int64(), entry >> 16)
+    expected.write_bits(0L, table_linbits(table))
+    expected.write_bit(1)
+    expected.write_bits(0L, table_linbits(table))
+    expected.write_bit(0)
+    assert_eq(write_pair(w, table, -15, 15), expected.bit_length())
+    assert_eq(pair_cost(table, -15, 15), expected.bit_length())
+    assert_eq(w.finish(), expected.finish())
   }
 }
 

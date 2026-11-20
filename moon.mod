@@ -3,7 +3,7 @@
 
 name = "Sakuraqwq1/moonmp3-encoder"
 
-version = "0.3.3"
+version = "0.3.4"
 
 readme = "README.md"
 
